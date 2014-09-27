@@ -1,0 +1,58 @@
+/******************************************************************************/
+// _icons.scss
+//
+// DESCRIPTION: Loads the icon font, generates icon classes, and creates an
+// icon() mixin to be used within CSS.
+//
+// Configuration for this file is in config/_icons.scss
+@include font-face($icon-name, "#{$icon-path}#{$icon-name}", $asset-pipeline: true);
+
+%icon-font-#{$icon-name} {
+  font-family: $icon-name;
+  speak: none;
+  font-variant: normal;
+  font-style: normal;
+  font-weight: normal;
+  text-transform: none;
+  line-height: 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+$icon-prefix: '' !default;
+@if $icon-prefix { $icon-prefix: "-#{$icon-prefix}"; }
+
+/* Use the following CSS code if you want to use data attributes for inserting your icons */
+[data-icon]:before {
+  @extend %icon-font-#{$icon-name};
+  content: attr(data-icon);
+}
+
+.button > [class*="icon-"] { margin-right: rem-calc(5); }
+
+[class*="icon#{$icon-prefix}-"] {
+  @extend %icon-font-#{$icon-name};
+  background: none;
+  &:active { text-decoration: none; }
+}
+
+@each $icon in $icons {
+  .icon#{$icon-prefix}-#{nth($icon, 1)}:before { content: '#{nth($icon, 2)}' }
+}
+
+// Helpers
+@mixin icon($icon) {
+  $char-code: get-list-value($icons, $icon);
+  @extend %icon-font-#{$icon-name};
+  content: "#{$char-code}";
+}
+
+// Adds the specified icon to the specified pseudo class
+@mixin inline-icon($icon-name: '', $color: inherit, $pseudo: before, $font-size: false, $margin: 0, $padding: 0) {
+  &:#{$pseudo} {
+    @include icon($icon-name);
+    @if $font-size { font-size: $font-size; }
+    color: $color;
+    margin: $margin;
+    padding: $padding;
+  }
+}

@@ -1,0 +1,24 @@
+$colors-border: rgba($dark-grey, .25) !default;
+$colors-h5-background-color: $grey !default;
+
+@mixin color-block($color) {
+  .color {
+    @include box-shadow(0 0 0 1px $colors-border);
+    background-color: $color;
+    min-height: 100px;
+  }
+  h5 {
+    @include inline-block;
+    background-color: $colors-h5-background-color;
+    border-radius: $global-radius;
+    font-size: 13px;
+    font-family: $code-font;
+    padding: 2px 5px 3px;
+  }
+  h5:after {
+    @include inline-block;
+    content: ": #{$color};";
+    vertical-align: baseline;
+    position: relative;
+  }
+}

@@ -1,0 +1,15 @@
+@mixin hover-border($pseudo: before, $width: 5px, $background-color: $hover-border-background-color) {
+  $modifier: left;
+  @if $pseudo == after { $modifier: right; }
+  &:#{$pseudo} {
+    @include transition(all .3s ease);
+    #{$modifier}: 0;
+    background-color: $background-color;
+    bottom: 0;
+    content: '';
+    position: absolute;
+    top: 0;
+    width: $width;
+    z-index: 100;
+  }
+}

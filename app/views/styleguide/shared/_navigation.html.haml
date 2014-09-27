@@ -1,0 +1,26 @@
+%nav
+  %a.menu
+    %span Menu
+  - navigation_hash.each do |folder_name, folder_contents|
+    .nav-item
+      %a.nav-item-title= folder_name.titleize
+      %ul.nav-item-list= render partial: 'styleguide/shared/navigation_link', collection: folder_contents, as: :page, locals: { folder: folder_name }
+  .nav-item
+    %a.nav-item-title Width
+    %ul.nav-item-list
+      %li
+        %a.width-option(data-width="320px") 320
+      %li
+        %a.width-option(data-width="480px") 480
+      %li
+        %a.width-option(data-width="748px") 748
+      %li
+        %a.width-option(data-width="960px") 960
+      %li
+        %a.width-option(data-width="1024px") 1024
+      %li
+        %a.width-option(data-width="1280px") 1280
+      %li
+        %a.width-option(data-width="640px") iPhone
+      %li
+        %a.width-option(data-width="100%") Full

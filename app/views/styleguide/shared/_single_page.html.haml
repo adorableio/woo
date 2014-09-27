@@ -1,0 +1,21 @@
+
+%dl.styleguide
+  %a(name="#{page[:name]}")
+  %dt.page-title
+    = page[:name].titleize
+  - notes = page[:notes]
+  - if notes
+    %dd.notes
+      .row
+        .small-12.columns
+          .wrapper
+            %h3.notes-title # Notes
+            = render_haml_string(notes)
+
+  %dd.preview
+    = render_haml_string(page[:contents])
+
+  %dd.location-title
+    .location= page[:filepath]
+    %pre
+      %code(class="#{page[:lang]}")= page[:contents]
