@@ -5,13 +5,13 @@ require "styleguide/version"
 
 # Describe your gem and declare its dependencies:
 Gem::Specification.new do |s|
-  s.name        = "styleguide"
+  s.name        = "woo"
   s.version     = Styleguide::VERSION
   s.authors     = ["Kevin Altman", "Jim Remsik"]
-  s.email       = ["bot@adorable.io"]
-  s.homepage    = "http://adorable.io"
-  s.summary     = "TODO: Summary of Styleguide."
-  s.description = "TODO: Description of Styleguide."
+  s.email       = ["kevin@itsthatguy.com", "jremsikjr@gmail.com"]
+  s.homepage    = "https://github.com/adorableio/styleguide"
+  s.summary     = "A mountable styleguide"
+  s.description = "A mountable styleguide to drive your development"
   s.license     = "MIT"
 
   s.files = Dir["{app,config,db,lib}/**/*", "MIT-LICENSE", "Rakefile", "README.rdoc"]
