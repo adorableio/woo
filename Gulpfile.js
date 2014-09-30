@@ -14,13 +14,13 @@ var baseSrcPath  = path.join(__dirname, 'src'),
 var paths = {
   coffeeInput    : path.join(baseJsPath, 'app.coffee'),
   coffeeOutput   : path.join(baseDestPath, 'javascripts', 'woo')
-}
+};
 
 var watchPaths = {
   coffee: [
     path.join(baseJsPath, '**', '*.coffee')
   ]
-}
+};
 
 //
 // Coffee
