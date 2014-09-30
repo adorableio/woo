@@ -4,10 +4,9 @@
     %title Application Style Guide
     %meta(content="width=device-width, initial-scale=1.0, maximum-scale=1.0" name="viewport")
 
-    = javascript_include_tag 'styleguide/application'
-    = stylesheet_link_tag 'styleguide/application', media: 'all', 'data-turbolinks-track' => true
+    = javascript_include_tag 'woo/application'
+    = stylesheet_link_tag 'woo/application', media: 'all', 'data-turbolinks-track' => true
     = stylesheet_link_tag "//cdnjs.cloudflare.com/ajax/libs/highlight.js/8.1/styles/github.min.css"
-  %body#styleguide-rails
+  %body#woo-styleguide
     = yield
 
-  / %script(src="/assets/styleguide/main.js")

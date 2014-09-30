@@ -2,7 +2,7 @@ $ = require 'jquery'
 _ = require 'underscore'
 window.hljs = hljs = require('highlight.js')
 
-class Styleguide
+class Woo
   menuPreviewTolerance: 150
 
   constructor: ->
@@ -50,4 +50,4 @@ class Styleguide
       $('nav .nav-item').removeClass('open')
       $(this).toggleClass('open')
 
-$ -> new Styleguide()
+$ -> new Woo()

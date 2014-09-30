@@ -1,6 +1,6 @@
-module Styleguide
+module Woo
   class Engine < ::Rails::Engine
-    isolate_namespace Styleguide
+    isolate_namespace Woo
 
     config.generators do |g|
       g.test_framework      :rspec,        :fixture => false

@@ -1,4 +1,4 @@
-module Styleguide
+module Woo
   module StyleguideHelper
 
     BASE_PATH = "app/views/styleguide"

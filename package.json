@@ -1,8 +1,9 @@
 {
-  "name": "styleguide",
+  "name": "woo",
   "version": "0.0.1",
-  "description": "Styleguide",
+  "description": "Woo",
   "main": "index.js",
+  "private": "true",
   "engines": {
     "node": "0.10.x"
   },

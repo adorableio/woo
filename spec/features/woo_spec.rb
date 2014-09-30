@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-describe 'Styleguide' do
+describe 'Woo' do
 
   before do
     visit '/styleguide'

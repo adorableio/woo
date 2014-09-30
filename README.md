@@ -1,13 +1,13 @@
-# Styleguide
+# Woo
 
 add to `Gemfile`
 
 ```ruby
-gem 'woo', require: 'styleguide'
+gem 'woo', require: 'woo'
 ```
 
 add to `config/routes.rb`
 
 ```ruby
-mount Styleguide::Engine, at: '/styleguide'
+mount Woo::Engine, at: '/styleguide'
 ```

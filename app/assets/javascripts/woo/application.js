@@ -18473,7 +18473,7 @@ return jQuery;
 }.call(this));
 
 },{}],97:[function(require,module,exports){
-var $, Styleguide, hljs, _,
+var $, Woo, hljs, _,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; };
 
 $ = require('jquery');
@@ -18482,10 +18482,10 @@ _ = require('underscore');
 
 window.hljs = hljs = require('highlight.js');
 
-Styleguide = (function() {
-  Styleguide.prototype.menuPreviewTolerance = 150;
+Woo = (function() {
+  Woo.prototype.menuPreviewTolerance = 150;
 
-  function Styleguide() {
+  function Woo() {
     this.closeMenuEventually = __bind(this.closeMenuEventually, this);
     this.openMenu = __bind(this.openMenu, this);
     hljs.initHighlighting();
@@ -18494,22 +18494,22 @@ Styleguide = (function() {
     this.activateCodeShowing();
   }
 
-  Styleguide.prototype.openMenu = function() {
+  Woo.prototype.openMenu = function() {
     $('body').addClass('open');
     if (this.delayedClose) {
       return clearTimeout(this.delayedClose);
     }
   };
 
-  Styleguide.prototype.closeMenuEventually = function() {
+  Woo.prototype.closeMenuEventually = function() {
     return this.delayedClose = _.delay(this.closeMenu, 300);
   };
 
-  Styleguide.prototype.closeMenu = function() {
+  Woo.prototype.closeMenu = function() {
     return $('body').removeClass('open');
   };
 
-  Styleguide.prototype.bindWidthPickers = function() {
+  Woo.prototype.bindWidthPickers = function() {
     return $('a[data-width]').click(function() {
       $('dd.preview').css('width', $(this).data('width'));
       $(this).siblings().removeClass('selected');
@@ -18517,13 +18517,13 @@ Styleguide = (function() {
     });
   };
 
-  Styleguide.prototype.activateCodeShowing = function() {
+  Woo.prototype.activateCodeShowing = function() {
     return $('div.location').click(function() {
       return $(this).toggleClass('show-code');
     });
   };
 
-  Styleguide.prototype.setupEvents = function() {
+  Woo.prototype.setupEvents = function() {
     $('body').on('mouseleave', 'nav', this.closeMenuEventually);
     $('body').on('mouseover', 'nav', this.openMenu);
     $('body nav').on('click', '.menu', this.closeMenu);
@@ -18543,12 +18543,12 @@ Styleguide = (function() {
     });
   };
 
-  return Styleguide;
+  return Woo;
 
 })();
 
 $(function() {
-  return new Styleguide();
+  return new Woo();
 });
 
 

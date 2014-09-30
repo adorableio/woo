@@ -4,7 +4,7 @@
   - navigation_hash.each do |folder_name, folder_contents|
     .nav-item
       %a.nav-item-title= folder_name.titleize
-      %ul.nav-item-list= render partial: 'styleguide/shared/navigation_link', collection: folder_contents, as: :page, locals: { folder: folder_name }
+      %ul.nav-item-list= render partial: 'woo/shared/navigation_link', collection: folder_contents, as: :page, locals: { folder: folder_name }
   .nav-item
     %a.nav-item-title Width
     %ul.nav-item-list

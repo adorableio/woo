@@ -1,3 +1,3 @@
-Styleguide::Engine.routes.draw do
+Woo::Engine.routes.draw do
   root 'styleguide#index'
 end

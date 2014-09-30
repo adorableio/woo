@@ -1,4 +1,4 @@
-module Styleguide
+module Woo
   class ApplicationController < ActionController::Base
   end
 end
