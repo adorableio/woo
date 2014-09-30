@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    styleguide (0.0.1)
+    woo (0.0.1)
       bourbon
       coffee-rails
       decent_exposure
@@ -152,4 +152,4 @@ DEPENDENCIES
   fivemat
   rspec-rails
   sqlite3
-  styleguide!
+  woo!
