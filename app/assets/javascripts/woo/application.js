@@ -18537,10 +18537,13 @@ Woo = (function() {
         }
       };
     })(this));
-    return $('nav .nav-item').on('click', function(e) {
-      $('nav .nav-item').removeClass('open');
-      return $(this).toggleClass('open');
-    });
+    $('nav .nav-item .nav-item-icon').on('mouseover', this.openNavItem);
+    return $('nav .nav-item .nav-item-title').on('click', this.openNavItem);
+  };
+
+  Woo.prototype.openNavItem = function(e) {
+    $('nav .nav-item').removeClass('open');
+    return $(this).parent().toggleClass('open');
   };
 
   return Woo;

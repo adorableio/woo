@@ -71,12 +71,16 @@ $notes-background-color: $white;
 
     .nav-item {
       @include transition(all .3s ease .2s);
+      cursor: pointer;
+      position: relative;
       opacity: 0;
 
       &.open {
-        .nav-item-title {
-          color: $white;
-          &:after { @include icon('arrow-down'); }
+        .nav-item-icon {
+          &:after {
+            @include icon('arrow-down');
+            color: $white;
+          }
         }
         ul.nav-item-list { display: block; }
       }
@@ -86,11 +90,21 @@ $notes-background-color: $white;
         font-weight: 500;
         margin-bottom: 1px;
         text-transform: uppercase;
+      }
 
+      .nav-item-icon {
+        position: absolute;
+        bottom: 0;
+        right: 0;
+        top: 0;
+        width: 40px;
         &:after {
           @include icon('arrow-up');
+          color: $grey;
+          top: 20px;
           position: absolute;
           right: 20px;
+          line-height: 100%;
         }
       }
     }

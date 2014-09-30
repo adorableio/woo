@@ -46,8 +46,11 @@ class Woo
       else
         $('body nav').removeClass('near-menu')
 
-    $('nav .nav-item').on 'click', (e) ->
-      $('nav .nav-item').removeClass('open')
-      $(this).toggleClass('open')
+    $('nav .nav-item .nav-item-icon').on 'mouseover', @openNavItem
+    $('nav .nav-item .nav-item-title').on 'click', @openNavItem
+
+  openNavItem: (e) ->
+    $('nav .nav-item').removeClass('open')
+    $(this).parent().toggleClass('open')
 
 $ -> new Woo()
