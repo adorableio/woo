@@ -18,8 +18,10 @@ Gem::Specification.new do |s|
   s.test_files = Dir["spec/**/*"]
 
   s.add_dependency "rails", "~> 4.1.6"
+  s.add_dependency "bourbon"
   s.add_dependency "decent_exposure"
   s.add_dependency "haml-rails"
+  s.add_dependency "sass-rails"
 
   s.add_development_dependency 'fivemat'
   s.add_development_dependency 'rspec-rails'

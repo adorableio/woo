@@ -1,20 +1,20 @@
 @import "bourbon";
 
 // config
-@import "styleguide/config/colors";
-@import "styleguide/config/fonts";
-@import "styleguide/config/icons";
-@import "styleguide/config/settings";
-@import "styleguide/config/media-queries";
+@import "woo/config/colors";
+@import "woo/config/fonts";
+@import "woo/config/icons";
+@import "woo/config/settings";
+@import "woo/config/media-queries";
 
 // My lyberries
-@import "styleguide/lib/functions";
-@import "styleguide/lib/animation-mixins";
-@import "styleguide/lib/icon-factory";
+@import "woo/lib/functions";
+@import "woo/lib/animation-mixins";
+@import "woo/lib/icon-factory";
 
 // Mixins
-@import "styleguide/mixins/color-block";
-@import "styleguide/mixins/hover-border";
+@import "woo/mixins/color-block";
+@import "woo/mixins/hover-border";
 
 // partials
-@import "styleguide/partials/main";
+@import "woo/partials/main";
