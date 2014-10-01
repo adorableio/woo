@@ -1,0 +1,9 @@
+language: ruby
+
+rvm:
+  - ruby-2.0.0-p451
+
+script: bundle exec rspec
+
+bundler_args: --without development --path=vendor/bundle
+
