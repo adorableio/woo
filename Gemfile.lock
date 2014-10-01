@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    woo (0.1.1)
+    woo (0.1.2)
       bourbon
       decent_exposure
       haml-rails
