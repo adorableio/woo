@@ -20,8 +20,8 @@ Example:
           return
         end
 
-        @clean_path = Pathname.new(file_path).cleanpath.to_s
-        template 'example_page.erb', "app/views/styleguide/#{@clean_path}.html.haml"
+        @page_path = Pathname.new(file_path).cleanpath.to_s
+        template 'example_page.erb', "app/views/styleguide/#{@page_path}.html.haml"
       end
     end
   end
