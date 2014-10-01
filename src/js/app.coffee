@@ -37,7 +37,6 @@ class Woo
     $('body').on('mouseover', 'nav', @openMenu)
 
     $('body nav').on('click', '.menu', @closeMenu)
-
     $('nav .nav-item-list [href]').on('click', @closeMenu)
 
     $('body').on 'mousemove', (e) =>
@@ -46,7 +45,6 @@ class Woo
       else
         $('body nav').removeClass('near-menu')
 
-    $('nav .nav-item .nav-item-icon').on 'mouseover', @openNavItem
     $('nav .nav-item .nav-item-title').on 'click', @openNavItem
 
   openNavItem: (e) ->
