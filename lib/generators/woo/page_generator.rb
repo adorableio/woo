@@ -7,9 +7,7 @@ module Woo
       desc 'Create a Page for woo!'
 
       def create_page
-        @file_path = Pathname.new(file_path).cleanpath.to_s
         path_array = Pathname.new(file_path).each_filename.to_a
-
         if path_array.length > 2
           puts '
 Rut Roh! You specified a path with more than one directory
@@ -22,7 +20,8 @@ Example:
           return
         end
 
-        template 'example_page.erb', "app/views/styleguide/#{@file_path}.html.haml"
+        @clean_path = Pathname.new(file_path).cleanpath.to_s
+        template 'example_page.erb', "app/views/styleguide/#{@clean_path}.html.haml"
       end
     end
   end
