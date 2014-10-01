@@ -4,7 +4,7 @@
 add to `Gemfile`
 
 ```ruby
-gem 'woo', require: 'woo'
+gem 'woo'
 ```
 
 add to `config/routes.rb`
