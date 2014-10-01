@@ -1,9 +1,8 @@
 language: ruby
-
+cache: bundler
 rvm:
   - ruby-2.0.0-p451
-
+before_install:
+  - gem update --system
+install: bundle instal
 script: bundle exec rspec
-
-bundler_args: --without development --path=vendor/bundle
-
