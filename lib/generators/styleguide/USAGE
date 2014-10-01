@@ -1,0 +1,17 @@
+Description:
+    Creates views used within the woo styleguide.
+
+Usage:
+  Pass the name of the page or ui_element as the first argument.
+
+Example:
+    rails generate styleguide:page NAME [DIRECTORY]
+
+      Creates app/views/styleguide/DIRECTORY/NAME
+      If DIRECTORY is not specified, it will default to 'pages'
+
+    rails generate styleguide:ui_element NAME
+
+      Creates app/views/styleguide/ui_elements/_NAME
+      ui_elements are rendered as partials
+
