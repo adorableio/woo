@@ -24,16 +24,18 @@ mount Woo::Engine, at: '/styleguide'
 Woo features 2 generators to create views used within the styleguide.
 
 ### Pages
-Creates app/views/styleguide/DIRECTORY/NAME.html.haml
-If <DIRECTORY> is not specified, it will default to 'pages'
+Creates `app/views/styleguide/DIRECTORY/NAME.html.haml`
+
+If `DIRECTORY` is not specified, it will default to 'pages'.
 
 ```
 rails generate woo:page [DIRECTORY/]NAME
 ```
 
 ### UI Elements
-Creates app/views/styleguide/ui_elements/_NAME.html.haml
-ui_elements are rendered as partials
+Creates `app/views/styleguide/ui_elements/_NAME.html.haml`
+
+UI Elements are rendered as partials rather than individual pages.
 
 ```
 rails generate styleguide:ui_element NAME
