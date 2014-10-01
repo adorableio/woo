@@ -2,4 +2,3 @@ language: ruby
 cache: bundler
 rvm:
   - ruby-2.0.0-p451
-script: bundle exec rspec
