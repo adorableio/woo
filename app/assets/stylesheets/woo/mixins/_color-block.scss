@@ -3,7 +3,7 @@ $colors-h5-background-color: $grey !default;
 
 @mixin color-block($color) {
   .color {
-    @include box-shadow(0 0 0 1px $colors-border);
+    box-shadow: 0 0 0 1px $colors-border;
     background-color: $color;
     min-height: 100px;
   }
