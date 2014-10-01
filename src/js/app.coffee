@@ -2,7 +2,7 @@ $ = require 'jquery'
 _ = require 'underscore'
 window.hljs = hljs = require('highlight.js')
 
-class Styleguide
+class Woo
   menuPreviewTolerance: 150
 
   constructor: ->
@@ -46,8 +46,11 @@ class Styleguide
       else
         $('body nav').removeClass('near-menu')
 
-    $('nav .nav-item').on 'click', (e) ->
-      $('nav .nav-item').removeClass('open')
-      $(this).toggleClass('open')
+    $('nav .nav-item .nav-item-icon').on 'mouseover', @openNavItem
+    $('nav .nav-item .nav-item-title').on 'click', @openNavItem
 
-$ -> new Styleguide()
+  openNavItem: (e) ->
+    $('nav .nav-item').removeClass('open')
+    $(this).parent().toggleClass('open')
+
+$ -> new Woo()

@@ -1,3 +1,3 @@
 Rails.application.routes.draw do
-  mount Styleguide::Engine => "/styleguide"
+  mount Woo::Engine => "/styleguide"
 end
