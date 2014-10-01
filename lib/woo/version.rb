@@ -1,3 +1,3 @@
 module Woo
-  VERSION = "0.1.0.pre1"
+  VERSION = "0.1.0"
 end
