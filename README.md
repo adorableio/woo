@@ -40,3 +40,15 @@ UI Elements are rendered as partials rather than individual pages.
 ```
 rails generate styleguide:ui_element NAME
 ```
+
+### Configuration
+
+```ruby
+# config/application.rb
+
+# Add your custom woo to the styleguide
+config.woo.stylesheets << 'my_woo_styles.css'
+
+# Use only your JS in the styleguide
+config.woo.javascripts = ['my_woo.js']
+```
