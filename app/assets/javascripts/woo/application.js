@@ -18492,6 +18492,7 @@ Woo = (function() {
     this.setupEvents();
     this.bindWidthPickers();
     this.activateCodeShowing();
+    this.executeColorTransmogrification();
   }
 
   Woo.prototype.openMenu = function() {
@@ -18523,6 +18524,14 @@ Woo = (function() {
     });
   };
 
+  Woo.prototype.executeColorTransmogrification = function() {
+    var previewColor;
+    previewColor = $('body').css('background-color');
+    return $('dd.preview').css({
+      'background-color': previewColor
+    });
+  };
+
   Woo.prototype.setupEvents = function() {
     $('body').on('mouseleave', 'nav', this.closeMenuEventually);
     $('body').on('mouseover', 'nav', this.openMenu);
@@ -18537,7 +18546,6 @@ Woo = (function() {
         }
       };
     })(this));
-    $('nav .nav-item .nav-item-icon').on('mouseover', this.openNavItem);
     return $('nav .nav-item .nav-item-title').on('click', this.openNavItem);
   };
 

@@ -8,16 +8,11 @@ $notes-background-color: $white;
 // Smoove dem fonts!
 * { -webkit-font-smoothing: antialiased; }
 
-#woo-styleguide {
-  background: $black;
-  padding: 0;
-  margin: 0;
-  font-family: $body-font;
-
-  &.open nav,
+body {
+  &.open #woo-styleguide nav,
   nav.near-menu { border-left: 5px solid $primary-color; }
 
-  &.open {
+  &.open #woo-styleguide {
     nav {
       background-color: darken($black, 5%);
       overflow-y: auto;
@@ -33,6 +28,15 @@ $notes-background-color: $white;
       .nav-item-list{ background: $black; }
     }
   }
+}
+
+#woo-styleguide {
+  background: $black;
+  padding: 0;
+  margin: 0;
+  font-family: $body-font;
+  box-sizing: border-box;
+  position: relative;
 
   //
   // NAVIGATION
@@ -75,11 +79,20 @@ $notes-background-color: $white;
       position: relative;
       opacity: 0;
 
+      &.open,
+      &:hover {
+        .nav-item-title { color: $nav-link-hover-color; }
+        .nav-item-icon:after { background: $nav-link-hover-color; }
+      }
+
       &.open {
         .nav-item-icon {
           &:after {
             @include icon('arrow-down');
-            color: $white;
+            background: none;
+            color: $nav-link-hover-color;
+            top: 20px;
+            right: 23px;
           }
         }
         ul.nav-item-list { display: block; }
@@ -99,11 +112,13 @@ $notes-background-color: $white;
         top: 0;
         width: 40px;
         &:after {
-          @include icon('arrow-up');
-          color: $grey;
-          top: 20px;
+          content: '';
+          height: 1px;
+          width: 12px;
+          background: rgba($nav-link-color, .5);
+          top: 26px;
           position: absolute;
-          right: 20px;
+          right: 22px;
           line-height: 100%;
         }
       }
@@ -189,7 +204,8 @@ $notes-background-color: $white;
   // ******************************************************************
 
   dl.styleguide {
-    margin: 200px 0;
+    margin: 0;
+    padding: 200px 0;
     position: relative;
 
     a[name] {

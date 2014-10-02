@@ -11,6 +11,7 @@ class Woo
     @setupEvents()
     @bindWidthPickers()
     @activateCodeShowing()
+    @executeColorTransmogrification()
 
   openMenu: =>
     $('body').addClass('open')
@@ -31,6 +32,10 @@ class Woo
   activateCodeShowing: ->
     $('div.location').click ->
       $(this).toggleClass('show-code')
+
+  executeColorTransmogrification: ->
+    previewColor = $('body').css('background-color')
+    $('dd.preview').css('background-color': previewColor)
 
   setupEvents: ->
     $('body').on('mouseleave', 'nav', @closeMenuEventually)
