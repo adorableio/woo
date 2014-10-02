@@ -8,5 +8,12 @@ module Woo
       g.assets false
       g.helper false
     end
+
+    config.woo = ActiveSupport::OrderedOptions.new
+    config.woo.stylesheets = %w(woo/application application)
+
+    initializer 'precompile custom stylesheets' do |app|
+      app.config.assets.precompile += app.config.woo.stylesheets
+    end
   end
 end
