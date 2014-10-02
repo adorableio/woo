@@ -4,12 +4,13 @@
     %title Application Style Guide
     %meta(content="width=device-width, initial-scale=1.0, maximum-scale=1.0" name="viewport")
 
-    = javascript_include_tag 'application'
-    = stylesheet_link_tag 'application', media: 'all', 'data-turbolinks-track' => true
-    
-    = javascript_include_tag 'woo/application'
     = stylesheet_link_tag 'woo/application', media: 'all', 'data-turbolinks-track' => true
+    = stylesheet_link_tag 'application', media: 'all', 'data-turbolinks-track' => true
     = stylesheet_link_tag "//cdnjs.cloudflare.com/ajax/libs/highlight.js/8.1/styles/github.min.css"
-  %body#woo-styleguide
-    = yield
 
+  %body
+    #woo-styleguide
+      = yield
+
+    = javascript_include_tag 'woo/application'
+    = javascript_include_tag 'application'
