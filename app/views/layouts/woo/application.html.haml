@@ -12,5 +12,5 @@
     #woo-styleguide
       = yield
 
-    = javascript_include_tag 'woo/application'
-    = javascript_include_tag 'application'
+    - Woo::Engine.config.woo.javascripts.each do |javascript|
+      = javascript_include_tag javascript

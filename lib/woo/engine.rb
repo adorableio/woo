@@ -11,9 +11,11 @@ module Woo
 
     config.woo = ActiveSupport::OrderedOptions.new
     config.woo.stylesheets = %w(woo/application application)
+    config.woo.javascripts = %w(woo/application application)
 
-    initializer 'precompile custom stylesheets' do |app|
+    initializer 'precompile custom assets' do |app|
       app.config.assets.precompile += app.config.woo.stylesheets
+      app.config.assets.precompile += app.config.woo.javascripts
     end
   end
 end
