@@ -1,7 +1,7 @@
 # Woo
 [![Build Status](https://travis-ci.org/adorableio/woo.svg?branch=master)](https://travis-ci.org/adorableio/woo)
 
-The Woo styleguide integrates with your Rails app, using your existing css.
+The Woo styleguide integrates with your Rails app, using your existing CSS.
 
 ## Setup
 
