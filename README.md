@@ -41,7 +41,7 @@ UI Elements are rendered as partials rather than individual pages.
 rails generate styleguide:ui_element NAME
 ```
 
-### Configuration
+## Configuration
 
 By default, Woo will load your main assets files (`application.js` and `application.css`) in addition to its own.
 However, you can override that behavior:
