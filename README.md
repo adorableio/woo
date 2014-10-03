@@ -43,10 +43,13 @@ rails generate styleguide:ui_element NAME
 
 ### Configuration
 
+By default, Woo will load your main assets files (`application.js` and `application.css`) in addition to its own.
+However, you can override that behavior:
+
 ```ruby
 # config/application.rb
 
-# Add your custom woo to the styleguide
+# Add your custom Woo to the styleguide
 config.woo.stylesheets << 'my_woo_styles.css'
 
 # Use only your JS in the styleguide
