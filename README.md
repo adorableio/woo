@@ -49,7 +49,7 @@ However, you can override that behavior:
 ```ruby
 # config/application.rb
 
-# Add your custom Woo to the styleguide
+# Add your custom Woo styles
 config.woo.stylesheets << 'my_woo_styles.css'
 
 # Use only your JS in the styleguide
