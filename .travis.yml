@@ -2,3 +2,6 @@ language: ruby
 cache: bundler
 rvm:
   - ruby-2.0.0-p451
+notifications:
+  flowdock:
+    secure: NomdDRokB71mhYSwPJDZIQ3g/vgTXmIJMlXsXORjN8mA+oAMFZ/P4jLT+h97i5p42x9cRnjPV+hbJPyHlKbiupr/XR6G+J0mzxM5MOwSsZrj76VYe9nLB5qovhwhKkHNUVQGAsjsHqDQcS7SHf7nZJZu7s6dQErvUCl1NhSKXBI=
