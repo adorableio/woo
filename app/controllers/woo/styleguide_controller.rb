@@ -1,6 +1,7 @@
 module Woo
   class StyleguideController < ApplicationController
     include StyleguideHelper
+    layout 'woo/application'
 
     # expose(:navigation) { navigation_hash() }
 
