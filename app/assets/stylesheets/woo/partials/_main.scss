@@ -172,34 +172,6 @@ body {
 
 
   //
-  // COLORS
-  // ******************************************************************
-
-  .colors {
-    // @include block-grid(1);
-    li {
-      // base colors
-      &.green { @include color-block($green); }
-      &.grey { @include color-block($grey); }
-      &.dark-grey { @include color-block($dark-grey); }
-      &.off-white { @include color-block($off-white); }
-      &.white { @include color-block($white); }
-
-      // component colors
-      &.primary-color { @include color-block($primary-color); }
-      &.secondary-color { @include color-block($secondary-color); }
-      &.alert-color { @include color-block($alert-color); }
-      &.success-color { @include color-block($success-color); }
-      &.warning-color { @include color-block($warning-color); }
-      &.info-color { @include color-block($info-color); }
-    }
-    @media #{$small} {
-      // @include block-grid(3);
-    }
-  }
-
-
-  //
   // BLOCK
   // ******************************************************************
 
