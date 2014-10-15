@@ -1,0 +1,70 @@
+//
+// BLOCK
+// ******************************************************************
+
+$styleguide-padding: 20px 0;
+
+#woo-styleguide {
+
+  dl.styleguide {
+    margin: 0;
+    padding: $styleguide-padding;
+    position: relative;
+
+    a[name] {
+      height: 0;
+      padding: 0;
+      margin: 0;
+    }
+    dt.page-title {
+      background-color: rgba($white, .95);
+      color: $black;
+      display: block;
+      font-size: 2em;
+      font-weight: 100;
+      margin: 2em 0 0;
+      padding: 10px 0;
+      text-align: center;
+    }
+
+    dd {
+      margin: 0 auto;
+      padding-top: 4em;
+      padding-bottom: 4em;
+      position: relative;
+      overflow: hidden;
+
+      &.notes {
+        background: $notes-section-background-color;
+        padding-top: 2em;
+        padding-bottom: 2em;
+        .wrapper {
+          background: $notes-background-color;
+          padding: 4em;
+        }
+        .notes-title {
+          box-shadow: 0 1px 0 0 rgba($black, .08);
+          color: rgba($black, .35);
+          font-size: rem-calc(14);
+          font-weight: 100;
+          font-style: italic;
+          padding-bottom: .35em;
+          position: relative;
+        }
+
+        h1, h2, h3, h4, h5, h6, p {
+          color: lighten($black, 15%);
+          font-weight: 200;
+        }
+
+      }
+      &.preview {
+        background: $body-background-color;
+      }
+      &.location-title {
+        padding: 0;
+      }
+    }
+  }
+
+}
