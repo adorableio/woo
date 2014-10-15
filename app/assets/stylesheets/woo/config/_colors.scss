@@ -5,43 +5,43 @@
 // definition live here.
 //
 
-$black: #41414e;
-$white: #e6e7ec;
+$black: #41414e !default;
+$white: #e6e7ec !default;
 
-$grey: #e7e8ea;
-$dark-grey: #48505f;
+$grey: #e7e8ea !default;
+$dark-grey: #48505f !default;
 
-$off-white: #f7f7f7;
+$off-white: #f7f7f7 !default;
 
-$green: #7fc35f;
-$light-green: #cfe7cd;
+$green: #7fc35f !default;
+$light-green: #cfe7cd !default;
 
-$yellow: #f08a24;
+$yellow: #f08a24 !default;
 
-$red: #ed5770;
+$red: #ed5770 !default;
 
-$primary-color: #f35656;
-$secondary-color: $grey;
-$alert-color: $red;
-$success-color: $green;
-$warning-color: $yellow;
-$info-color: #a0d3e8;
+$primary-color: #f35656 !default;
+$secondary-color: $grey !default;
+$alert-color: $red !default;
+$success-color: $green !default;
+$warning-color: $yellow !default;
+$info-color: #a0d3e8 !default;
 
 
 // color implementation
-$body-background-color: $white;
-$light-text-color: rgba($white, .35);
+$body-background-color: $white !default;
+$light-text-color: rgba($white, .35) !default;
 
 // navigation
-$nav-border-color: $primary-color;
-$nav-menu-icon-color: $primary-color;
-$nav-link-color: $light-text-color;
-$nav-link-hover-color: $grey;
-$nav-link-hr-color: $light-text-color;
+$nav-border-color: $primary-color !default;
+$nav-menu-icon-color: $primary-color !default;
+$nav-link-color: $light-text-color !default;
+$nav-link-hover-color: $grey !default;
+$nav-link-hr-color: $light-text-color !default;
 
 // @mixin color-block
-$colors-border: rgba($dark-grey, .25);
-$colors-h5-background-color: $grey;
+$colors-border: rgba($dark-grey, .25) !default;
+$colors-h5-background-color: $grey !default;
 
 // @mixin hover-border
-$hover-border-background-color: $red;
+$hover-border-background-color: $red !default;
