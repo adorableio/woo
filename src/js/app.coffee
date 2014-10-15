@@ -3,7 +3,7 @@ _ = require 'underscore'
 window.hljs = hljs = require('highlight.js')
 
 class Woo
-  menuPreviewTolerance: 150
+  menuPreviewTolerance: 15
 
   constructor: ->
     hljs.initHighlighting()

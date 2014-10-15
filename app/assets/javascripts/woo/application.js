@@ -18483,7 +18483,7 @@ _ = require('underscore');
 window.hljs = hljs = require('highlight.js');
 
 Woo = (function() {
-  Woo.prototype.menuPreviewTolerance = 150;
+  Woo.prototype.menuPreviewTolerance = 15;
 
   function Woo() {
     this.closeMenuEventually = __bind(this.closeMenuEventually, this);
