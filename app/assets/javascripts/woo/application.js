@@ -18485,20 +18485,43 @@ window.hljs = hljs = require('highlight.js');
 Woo = (function() {
   Woo.prototype.menuPreviewTolerance = 150;
 
+  Woo.prototype.menuOpenTolerance = 10;
+
+  Woo.prototype.previousMousePosition = {};
+
   function Woo() {
     this.closeMenuEventually = __bind(this.closeMenuEventually, this);
+    this.maybePreview = __bind(this.maybePreview, this);
+    this.maybeOpen = __bind(this.maybeOpen, this);
     this.openMenu = __bind(this.openMenu, this);
     hljs.initHighlighting();
     this.setupEvents();
     this.bindWidthPickers();
     this.activateCodeShowing();
     this.executeColorTransmogrification();
+    this._maybeOpen = _.debounce(this.maybeOpen, 10, true);
+    this._maybePreview = _.debounce(this.maybePreview, 10, true);
   }
 
   Woo.prototype.openMenu = function() {
     $('body').addClass('open');
+    $('body nav .menu').addClass('close');
     if (this.delayedClose) {
       return clearTimeout(this.delayedClose);
+    }
+  };
+
+  Woo.prototype.maybeOpen = function(mousePosition) {
+    if (mousePosition.x < this.previousMousePosition.x && mousePosition.x <= this.menuOpenTolerance) {
+      return this.openMenu();
+    }
+  };
+
+  Woo.prototype.maybePreview = function(mousePosition) {
+    if (mousePosition.x < this.previousMousePosition.x && mousePosition.x <= this.menuPreviewTolerance) {
+      return $('body nav').addClass('near-menu');
+    } else if (mousePosition.x >= this.menuPreviewTolerance) {
+      return $('body nav').removeClass('near-menu');
     }
   };
 
@@ -18506,8 +18529,9 @@ Woo = (function() {
     return this.delayedClose = _.delay(this.closeMenu, 300);
   };
 
-  Woo.prototype.closeMenu = function() {
-    return $('body').removeClass('open');
+  Woo.prototype.closeMenu = function(e) {
+    $('body').removeClass('open');
+    return $('body nav .menu').removeClass('close');
   };
 
   Woo.prototype.bindWidthPickers = function() {
@@ -18533,20 +18557,28 @@ Woo = (function() {
   };
 
   Woo.prototype.setupEvents = function() {
-    $('body').on('mouseleave', 'nav', this.closeMenuEventually);
-    $('body').on('mouseover', 'nav', this.openMenu);
-    $('body nav').on('click', '.menu', this.closeMenu);
-    $('nav .nav-item-list [href]').on('click', this.closeMenu);
-    $('body').on('mousemove', (function(_this) {
-      return function(e) {
-        if (e.pageX <= _this.menuPreviewTolerance) {
-          return $('body nav').addClass('near-menu');
-        } else {
-          return $('body nav').removeClass('near-menu');
-        }
+    var notSelectors;
+    notSelectors = 'nav, .menu, .nav-item, .nav-item-title, .nav-item-icon';
+    $("body #woo-styleguide :not(" + notSelectors + ")").on('click', this.closeMenu);
+    $('body nav').on('click', '.menu', this.openMenu);
+    $('body nav').on('click', '.close', this.closeMenu);
+    $('body').on('mouseleave', (function(_this) {
+      return function() {
+        return _this.previousMousePosition.x = 0;
       };
     })(this));
-    return $('nav .nav-item .nav-item-title').on('click', this.openNavItem);
+    $('body').on('mousemove', (function(_this) {
+      return function(e) {
+        var mousePosition;
+        mousePosition = {
+          x: e.pageX
+        };
+        _this._maybeOpen(mousePosition);
+        _this._maybePreview(mousePosition);
+        return _this.previousMousePosition = mousePosition;
+      };
+    })(this));
+    return $('nav .nav-item').on('click', '.nav-item-title, .nav-item-icon', this.openNavItem);
   };
 
   Woo.prototype.openNavItem = function(e) {

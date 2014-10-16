@@ -1,0 +1,152 @@
+//
+// NAVIGATION
+// ******************************************************************
+
+
+
+
+
+
+
+
+#woo-styleguide {
+  nav {
+    @include transition(all .3s ease);
+    background-color: transparent;
+    display: block;
+    font-size: 0.8em;
+    left: 0;
+    bottom: 0;
+    padding: 0;
+    position: fixed;
+    text-align: left;
+    top: 0;
+    width: 10px;
+    z-index: 1000;
+
+    .preview {
+      @include transition(all .3s ease);
+      background-color: $primary-color;
+      bottom: 0;
+      left: 0;
+      position: fixed;
+      top: 0;
+      width: 0px;
+      z-index: 1000;
+    }
+
+    a.menu {
+      @include transition(all .3s ease);
+      @include inline-icon('menu');
+      cursor: pointer;
+      pointer-events: auto;
+      color: $nav-menu-icon-color;
+      display: block;
+      font-size: 1.2em;
+      line-height: 2em;
+      margin-right: 0;
+      text-align: right;
+      z-index: 1000;
+      span { display: none; }
+
+      &:hover { box-shadow: none; }
+    }
+
+    .nav-item {
+      @include transition(all .3s ease .2s);
+      cursor: pointer;
+      overflow: hidden;
+      position: relative;
+      opacity: 0;
+
+      &.open,
+      &:hover {
+        .nav-item-title { color: $nav-link-hover-color; }
+        .nav-item-icon:after { background: $nav-link-hover-color; }
+      }
+
+      &.open {
+        .nav-item-icon {
+          &:after {
+            @include icon('arrow-down');
+            background: none;
+            color: $nav-link-hover-color;
+            top: 20px;
+            right: 23px;
+          }
+        }
+        ul.nav-item-list { display: block; }
+      }
+
+      .nav-item-title {
+        @include transition(all .3s ease);
+        font-weight: 500;
+        margin-bottom: 1px;
+        text-transform: uppercase;
+      }
+
+      .nav-item-icon {
+        position: absolute;
+        bottom: 0;
+        right: 0;
+        top: 0;
+        width: 40px;
+        &:after {
+          content: '';
+          height: 1px;
+          width: 12px;
+          background: rgba($nav-link-color, .5);
+          top: 26px;
+          position: absolute;
+          right: 22px;
+          line-height: 100%;
+        }
+      }
+    }
+
+    a {
+      @include transition(all .3s ease);
+      box-shadow: 0 1px 0 0 transparent;
+      color: $nav-link-color;
+      font-family: $header-font;
+      font-size: 1em;
+      display: block;
+      padding: 20px;
+      &:hover {
+        color: $nav-link-hover-color;
+      }
+    }
+
+    .nav-item-list {
+      @include transition(all .3s ease);
+      background-color: transparent;
+      display: none;
+      overflow: hidden;
+      padding: 10px 0;
+      margin: 0;
+
+      li {
+        display: block;
+        &:last-child { margin-right: 0; }
+
+        a {
+          font-size: 13px;
+          padding-left: 45px;
+          position: relative;
+          &:before {
+            box-shadow: inset 0 0 0 1px $nav-link-hr-color;
+            border-radius: 1000px;
+            left: 25px;
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            content: '';
+            font-size: 10px;
+            vertical-align: top;
+            margin-top: 4px;
+          }
+        }
+      }
+    }
+  }
+}
