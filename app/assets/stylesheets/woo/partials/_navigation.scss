@@ -2,11 +2,17 @@
 // NAVIGATION
 // ******************************************************************
 
+
+
+
+
+
+
+
 #woo-styleguide {
   nav {
     @include transition(all .3s ease);
     background-color: transparent;
-    border-left: 0px solid $nav-border-color;
     display: block;
     font-size: 0.8em;
     left: 0;
@@ -17,6 +23,17 @@
     top: 0;
     width: 10px;
     z-index: 1000;
+
+    .preview {
+      @include transition(all .3s ease);
+      background-color: $primary-color;
+      bottom: 0;
+      left: 0;
+      position: fixed;
+      top: 0;
+      width: 0px;
+      z-index: 1000;
+    }
 
     a.menu {
       @include transition(all .3s ease);
@@ -38,6 +55,7 @@
     .nav-item {
       @include transition(all .3s ease .2s);
       cursor: pointer;
+      overflow: hidden;
       position: relative;
       opacity: 0;
 

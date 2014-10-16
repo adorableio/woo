@@ -10,7 +10,11 @@ $notes-background-color: $white;
 
 body {
   &.open #woo-styleguide nav,
-  nav.near-menu { border-left: 5px solid $primary-color; }
+  #woo-styleguide nav.near-menu {
+    .preview {
+      width: 5px;
+    }
+  }
 
   &.open #woo-styleguide {
     nav {

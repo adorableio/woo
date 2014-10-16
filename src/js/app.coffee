@@ -3,7 +3,9 @@ _ = require 'underscore'
 window.hljs = hljs = require('highlight.js')
 
 class Woo
-  menuPreviewTolerance: 15
+  menuPreviewTolerance: 150
+  menuOpenTolerance: 10
+  previousMousePosition: {}
 
   constructor: ->
     hljs.initHighlighting()
@@ -12,16 +14,32 @@ class Woo
     @bindWidthPickers()
     @activateCodeShowing()
     @executeColorTransmogrification()
+    @_maybeOpen = _.debounce(@maybeOpen, 10, true)
+    @_maybePreview = _.debounce(@maybePreview, 10, true)
 
   openMenu: =>
     $('body').addClass('open')
+    $('body nav .menu').addClass('close')
     clearTimeout(@delayedClose) if @delayedClose
+
+  maybeOpen: (mousePosition) =>
+    if mousePosition.x < @previousMousePosition.x &&
+    mousePosition.x <= @menuOpenTolerance
+      @openMenu()
+
+  maybePreview: (mousePosition) =>
+    if mousePosition.x < @previousMousePosition.x &&
+    mousePosition.x <= @menuPreviewTolerance
+      $('body nav').addClass('near-menu')
+    else if mousePosition.x >= @menuPreviewTolerance
+      $('body nav').removeClass('near-menu')
 
   closeMenuEventually: =>
     @delayedClose = _.delay(@closeMenu, 300)
 
-  closeMenu: ->
+  closeMenu: (e) ->
     $('body').removeClass('open')
+    $('body nav .menu').removeClass('close')
 
   bindWidthPickers: ->
     $('a[data-width]').click ->
@@ -38,19 +56,21 @@ class Woo
     $('dd.preview').css('background-color': previewColor)
 
   setupEvents: ->
-    $('body').on('mouseleave', 'nav', @closeMenuEventually)
-    $('body').on('mouseover', 'nav', @openMenu)
+    notSelectors = 'nav, .menu, .nav-item, .nav-item-title, .nav-item-icon'
+    $("body #woo-styleguide :not(#{notSelectors})").on('click', @closeMenu)
 
-    $('body nav').on('click', '.menu', @closeMenu)
-    $('nav .nav-item-list [href]').on('click', @closeMenu)
+    $('body nav').on('click', '.menu', @openMenu)
+    $('body nav').on('click', '.close', @closeMenu)
+
+    $('body').on 'mouseleave', => @previousMousePosition.x = 0
 
     $('body').on 'mousemove', (e) =>
-      if e.pageX <= @menuPreviewTolerance
-        $('body nav').addClass('near-menu')
-      else
-        $('body nav').removeClass('near-menu')
+      mousePosition = {x: e.pageX}
+      @_maybeOpen(mousePosition)
+      @_maybePreview(mousePosition)
+      @previousMousePosition = mousePosition
 
-    $('nav .nav-item .nav-item-title').on 'click', @openNavItem
+    $('nav .nav-item').on 'click', '.nav-item-title, .nav-item-icon', @openNavItem
 
   openNavItem: (e) ->
     $('nav .nav-item').removeClass('open')
