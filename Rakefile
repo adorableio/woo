@@ -12,12 +12,15 @@ Bundler::GemHelper.install_tasks
 
 Dir[File.join(File.dirname(__FILE__), 'lib/tasks/**/*.rake')].each {|f| load f }
 
-require 'rspec/core'
-require 'rspec/core/rake_task'
+begin
+  require 'rspec/core/rake_task'
 
-desc "Run all specs in spec directory (excluding plugin specs)"
-RSpec::Core::RakeTask.new(:spec) do |t|
-  t.verbose = false
+  desc "Run all specs in spec directory (excluding plugin specs)"
+  RSpec::Core::RakeTask.new(:spec) do |t|
+    t.verbose = false
+  end
+
+  task :default => :spec
+rescue LoadError
+  puts 'Rspec is, unfortunately, not available. Perhaps add it to your Gemfile?'
 end
-
-task :default => :spec
