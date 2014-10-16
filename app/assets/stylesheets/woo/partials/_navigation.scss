@@ -38,7 +38,7 @@
     a.menu {
       @include transition(all .3s ease);
       @include inline-icon('menu');
-
+      cursor: pointer;
       pointer-events: auto;
       color: $nav-menu-icon-color;
       display: block;
