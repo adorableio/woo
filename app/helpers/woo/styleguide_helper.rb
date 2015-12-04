@@ -16,7 +16,20 @@ module Woo
     end
 
     def render_haml_string(contents)
-      Haml::Engine.new(contents).render
+      context = ActionView::Base.new(controller.view_context, {}, controller)
+      context.singleton_class.send(:include, Rails.application.routes.url_helpers)
+
+      context.define_singleton_method(:method_missing) do |name, *args, &block|
+        if respond_to?(name, true)
+          send(name, *args, &block)
+        elsif controller.respond_to?(name, true)
+          controller.send(name, *args, &block)
+        else
+          super(name, *args, &block)
+        end
+      end
+
+      Haml::Engine.new(contents).render(context)
     end
 
     def load_notes(filepath)
