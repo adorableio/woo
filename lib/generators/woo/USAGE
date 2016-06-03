@@ -10,7 +10,7 @@ Example:
       Creates app/views/styleguide/DIRECTORY/NAME
       If <DIRECTORY> is not specified, it will default to 'pages'
 
-    rails generate styleguide:ui_element NAME
+    rails generate woo:ui_element NAME
 
       Creates app/views/styleguide/ui_elements/_NAME
       ui_elements are rendered as partials
