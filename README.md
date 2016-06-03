@@ -38,7 +38,7 @@ Creates `app/views/styleguide/ui_elements/_NAME.html.haml`
 UI Elements are rendered as partials rather than individual pages.
 
 ```
-rails generate styleguide:ui_element NAME
+rails generate woo:ui_element NAME
 ```
 
 ## Configuration
