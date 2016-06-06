@@ -1,5 +1,29 @@
 (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);throw new Error("Cannot find module '"+o+"'")}var f=n[o]={exports:{}};t[o][0].call(f.exports,function(e){var n=t[o][1][e];return s(n?n:e)},f,f.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
-var Highlight = function() {
+/*
+Syntax highlighting with language autodetection.
+https://highlightjs.org/
+*/
+
+(function(factory) {
+
+  // Setup highlight.js for different environments. First is Node.js or
+  // CommonJS.
+  if(typeof exports !== 'undefined') {
+    factory(exports);
+  } else {
+    // Export hljs globally even when using AMD for cases when this script
+    // is loaded with others that may still expect a global hljs.
+    window.hljs = factory({});
+
+    // Finally register the global hljs with AMD.
+    if(typeof define === 'function' && define.amd) {
+      define('hljs', [], function() {
+        return window.hljs;
+      });
+    }
+  }
+
+}(function(hljs) {
 
   /* Utility functions */
 
@@ -16,21 +40,39 @@ var Highlight = function() {
     return match && match.index == 0;
   }
 
+  function isNotHighlighted(language) {
+    return (/^(no-?highlight|plain|text)$/i).test(language);
+  }
+
   function blockLanguage(block) {
-    var classes = (block.className + ' ' + (block.parentNode ? block.parentNode.className : '')).split(/\s+/);
-    classes = classes.map(function(c) {return c.replace(/^lang(uage)?-/, '');});
-    return classes.filter(function(c) {return getLanguage(c) || /no(-?)highlight/.test(c);})[0];
+    var i, match, length,
+        classes = block.className + ' ';
+
+    classes += block.parentNode ? block.parentNode.className : '';
+
+    // language-* takes precedence over non-prefixed class names
+    match = (/\blang(?:uage)?-([\w-]+)\b/i).exec(classes);
+    if (match) {
+      return getLanguage(match[1]) ? match[1] : 'no-highlight';
+    }
+
+    classes = classes.split(/\s+/);
+    for (i = 0, length = classes.length; i < length; i++) {
+      if (getLanguage(classes[i]) || isNotHighlighted(classes[i])) {
+        return classes[i];
+      }
+    }
   }
 
   function inherit(parent, obj) {
-    var result = {};
-    for (var key in parent)
+    var result = {}, key;
+    for (key in parent)
       result[key] = parent[key];
     if (obj)
-      for (var key in obj)
+      for (key in obj)
         result[key] = obj[key];
     return result;
-  };
+  }
 
   /* Stream merging */
 
@@ -146,7 +188,7 @@ var Highlight = function() {
     }
 
     function langRe(value, global) {
-      return RegExp(
+      return new RegExp(
         reStr(value),
         'm' + (language.case_insensitive ? 'i' : '') + (global ? 'g' : '')
       );
@@ -180,7 +222,7 @@ var Highlight = function() {
         }
         mode.keywords = compiled_keywords;
       }
-      mode.lexemesRe = langRe(mode.lexemes || /\b[A-Za-z0-9_]+\b/, true);
+      mode.lexemesRe = langRe(mode.lexemes || /\b\w+\b/, true);
 
       if (parent) {
         if (mode.beginKeywords) {
@@ -226,7 +268,7 @@ var Highlight = function() {
         .concat([mode.terminator_end, mode.illegal])
         .map(reStr)
         .filter(Boolean);
-      mode.terminators = terminators.length ? langRe(terminators.join('|'), true) : {exec: function(s) {return null;}};
+      mode.terminators = terminators.length ? langRe(terminators.join('|'), true) : {exec: function(/*s*/) {return null;}};
     }
 
     compileMode(language);
@@ -253,6 +295,9 @@ var Highlight = function() {
 
     function endOfMode(mode, lexeme) {
       if (testRe(mode.endRe, lexeme)) {
+        while (mode.endsParent && mode.parent) {
+          mode = mode.parent;
+        }
         return mode;
       }
       if (mode.endsWithParent) {
@@ -302,10 +347,15 @@ var Highlight = function() {
     }
 
     function processSubLanguage() {
-      if (top.subLanguage && !languages[top.subLanguage]) {
+      var explicit = typeof top.subLanguage == 'string';
+      if (explicit && !languages[top.subLanguage]) {
         return escape(mode_buffer);
       }
-      var result = top.subLanguage ? highlight(top.subLanguage, mode_buffer, true, subLanguageTop) : highlightAuto(mode_buffer);
+
+      var result = explicit ?
+                   highlight(top.subLanguage, mode_buffer, true, continuations[top.subLanguage]) :
+                   highlightAuto(mode_buffer, top.subLanguage.length ? top.subLanguage : undefined);
+
       // Counting embedded language score towards the host language may be disabled
       // with zeroing the containing mode relevance. Usecase in point is Markdown that
       // allows XML everywhere and makes every XML snippet to have a much larger Markdown
@@ -313,8 +363,8 @@ var Highlight = function() {
       if (top.relevance > 0) {
         relevance += result.relevance;
       }
-      if (top.subLanguageMode == 'continuous') {
-        subLanguageTop = result.top;
+      if (explicit) {
+        continuations[top.subLanguage] = result.top;
       }
       return buildSpan(result.language, result.value, false, true);
     }
@@ -396,9 +446,9 @@ var Highlight = function() {
 
     compileLanguage(language);
     var top = continuation || language;
-    var subLanguageTop;
-    var result = '';
-    for(var current = top; current != language; current = current.parent) {
+    var continuations = {}; // keep continuations for sub-languages
+    var result = '', current;
+    for(current = top; current != language; current = current.parent) {
       if (current.className) {
         result = buildSpan(current.className, '', true) + result;
       }
@@ -416,11 +466,11 @@ var Highlight = function() {
         index = match.index + count;
       }
       processLexeme(value.substr(index));
-      for(var current = top; current.parent; current = current.parent) { // close dangling modes
+      for(current = top; current.parent; current = current.parent) { // close dangling modes
         if (current.className) {
           result += '</span>';
         }
-      };
+      }
       return {
         relevance: relevance,
         value: result,
@@ -486,7 +536,7 @@ var Highlight = function() {
   */
   function fixMarkup(value) {
     if (options.tabReplace) {
-      value = value.replace(/^((<[^>]+>|\t)+)/gm, function(match, p1, offset, s) {
+      value = value.replace(/^((<[^>]+>|\t)+)/gm, function(match, p1 /*..., offset, s*/) {
         return p1.replace(/\t/g, options.tabReplace);
       });
     }
@@ -496,13 +546,28 @@ var Highlight = function() {
     return value;
   }
 
+  function buildClassName(prevClassName, currentLang, resultLang) {
+    var language = currentLang ? aliases[currentLang] : resultLang,
+        result   = [prevClassName.trim()];
+
+    if (!prevClassName.match(/\bhljs\b/)) {
+      result.push('hljs');
+    }
+
+    if (prevClassName.indexOf(language) === -1) {
+      result.push(language);
+    }
+
+    return result.join(' ').trim();
+  }
+
   /*
   Applies highlighting to a DOM node containing code. Accepts a DOM node and
   two optional parameters for fixMarkup.
   */
   function highlightBlock(block) {
     var language = blockLanguage(block);
-    if (/no(-?)highlight/.test(language))
+    if (isNotHighlighted(language))
         return;
 
     var node;
@@ -524,7 +589,7 @@ var Highlight = function() {
     result.value = fixMarkup(result.value);
 
     block.innerHTML = result.value;
-    block.className += ' hljs ' + (!language && result.language || '');
+    block.className = buildClassName(block.className, language, result.language);
     block.result = {
       language: result.language,
       re: result.relevance
@@ -575,7 +640,7 @@ var Highlight = function() {
   var aliases = {};
 
   function registerLanguage(name, language) {
-    var lang = languages[name] = language(this);
+    var lang = languages[name] = language(hljs);
     if (lang.aliases) {
       lang.aliases.forEach(function(alias) {aliases[alias] = name;});
     }
@@ -586,83 +651,89 @@ var Highlight = function() {
   }
 
   function getLanguage(name) {
+    name = (name || '').toLowerCase();
     return languages[name] || languages[aliases[name]];
   }
 
   /* Interface definition */
 
-  this.highlight = highlight;
-  this.highlightAuto = highlightAuto;
-  this.fixMarkup = fixMarkup;
-  this.highlightBlock = highlightBlock;
-  this.configure = configure;
-  this.initHighlighting = initHighlighting;
-  this.initHighlightingOnLoad = initHighlightingOnLoad;
-  this.registerLanguage = registerLanguage;
-  this.listLanguages = listLanguages;
-  this.getLanguage = getLanguage;
-  this.inherit = inherit;
+  hljs.highlight = highlight;
+  hljs.highlightAuto = highlightAuto;
+  hljs.fixMarkup = fixMarkup;
+  hljs.highlightBlock = highlightBlock;
+  hljs.configure = configure;
+  hljs.initHighlighting = initHighlighting;
+  hljs.initHighlightingOnLoad = initHighlightingOnLoad;
+  hljs.registerLanguage = registerLanguage;
+  hljs.listLanguages = listLanguages;
+  hljs.getLanguage = getLanguage;
+  hljs.inherit = inherit;
 
   // Common regexps
-  this.IDENT_RE = '[a-zA-Z][a-zA-Z0-9_]*';
-  this.UNDERSCORE_IDENT_RE = '[a-zA-Z_][a-zA-Z0-9_]*';
-  this.NUMBER_RE = '\\b\\d+(\\.\\d+)?';
-  this.C_NUMBER_RE = '(\\b0[xX][a-fA-F0-9]+|(\\b\\d+(\\.\\d*)?|\\.\\d+)([eE][-+]?\\d+)?)'; // 0x..., 0..., decimal, float
-  this.BINARY_NUMBER_RE = '\\b(0b[01]+)'; // 0b...
-  this.RE_STARTERS_RE = '!|!=|!==|%|%=|&|&&|&=|\\*|\\*=|\\+|\\+=|,|-|-=|/=|/|:|;|<<|<<=|<=|<|===|==|=|>>>=|>>=|>=|>>>|>>|>|\\?|\\[|\\{|\\(|\\^|\\^=|\\||\\|=|\\|\\||~';
+  hljs.IDENT_RE = '[a-zA-Z]\\w*';
+  hljs.UNDERSCORE_IDENT_RE = '[a-zA-Z_]\\w*';
+  hljs.NUMBER_RE = '\\b\\d+(\\.\\d+)?';
+  hljs.C_NUMBER_RE = '(\\b0[xX][a-fA-F0-9]+|(\\b\\d+(\\.\\d*)?|\\.\\d+)([eE][-+]?\\d+)?)'; // 0x..., 0..., decimal, float
+  hljs.BINARY_NUMBER_RE = '\\b(0b[01]+)'; // 0b...
+  hljs.RE_STARTERS_RE = '!|!=|!==|%|%=|&|&&|&=|\\*|\\*=|\\+|\\+=|,|-|-=|/=|/|:|;|<<|<<=|<=|<|===|==|=|>>>=|>>=|>=|>>>|>>|>|\\?|\\[|\\{|\\(|\\^|\\^=|\\||\\|=|\\|\\||~';
 
   // Common modes
-  this.BACKSLASH_ESCAPE = {
+  hljs.BACKSLASH_ESCAPE = {
     begin: '\\\\[\\s\\S]', relevance: 0
   };
-  this.APOS_STRING_MODE = {
+  hljs.APOS_STRING_MODE = {
     className: 'string',
     begin: '\'', end: '\'',
     illegal: '\\n',
-    contains: [this.BACKSLASH_ESCAPE]
+    contains: [hljs.BACKSLASH_ESCAPE]
   };
-  this.QUOTE_STRING_MODE = {
+  hljs.QUOTE_STRING_MODE = {
     className: 'string',
     begin: '"', end: '"',
     illegal: '\\n',
-    contains: [this.BACKSLASH_ESCAPE]
+    contains: [hljs.BACKSLASH_ESCAPE]
   };
-  this.PHRASAL_WORDS_MODE = {
-    begin: /\b(a|an|the|are|I|I'm|isn't|don't|doesn't|won't|but|just|should|pretty|simply|enough|gonna|going|wtf|so|such)\b/
+  hljs.PHRASAL_WORDS_MODE = {
+    begin: /\b(a|an|the|are|I|I'm|isn't|don't|doesn't|won't|but|just|should|pretty|simply|enough|gonna|going|wtf|so|such|will|you|your|like)\b/
   };
-  this.C_LINE_COMMENT_MODE = {
-    className: 'comment',
-    begin: '//', end: '$',
-    contains: [this.PHRASAL_WORDS_MODE]
+  hljs.COMMENT = function (begin, end, inherits) {
+    var mode = hljs.inherit(
+      {
+        className: 'comment',
+        begin: begin, end: end,
+        contains: []
+      },
+      inherits || {}
+    );
+    mode.contains.push(hljs.PHRASAL_WORDS_MODE);
+    mode.contains.push({
+      className: 'doctag',
+      begin: "(?:TODO|FIXME|NOTE|BUG|XXX):",
+      relevance: 0
+    });
+    return mode;
   };
-  this.C_BLOCK_COMMENT_MODE = {
-    className: 'comment',
-    begin: '/\\*', end: '\\*/',
-    contains: [this.PHRASAL_WORDS_MODE]
-  };
-  this.HASH_COMMENT_MODE = {
-    className: 'comment',
-    begin: '#', end: '$',
-    contains: [this.PHRASAL_WORDS_MODE]
-  };
-  this.NUMBER_MODE = {
+  hljs.C_LINE_COMMENT_MODE = hljs.COMMENT('//', '$');
+  hljs.C_BLOCK_COMMENT_MODE = hljs.COMMENT('/\\*', '\\*/');
+  hljs.HASH_COMMENT_MODE = hljs.COMMENT('#', '$');
+  hljs.NUMBER_MODE = {
     className: 'number',
-    begin: this.NUMBER_RE,
+    begin: hljs.NUMBER_RE,
     relevance: 0
   };
-  this.C_NUMBER_MODE = {
+  hljs.C_NUMBER_MODE = {
     className: 'number',
-    begin: this.C_NUMBER_RE,
+    begin: hljs.C_NUMBER_RE,
     relevance: 0
   };
-  this.BINARY_NUMBER_MODE = {
+  hljs.BINARY_NUMBER_MODE = {
     className: 'number',
-    begin: this.BINARY_NUMBER_RE,
+    begin: hljs.BINARY_NUMBER_RE,
     relevance: 0
   };
-  this.CSS_NUMBER_MODE = {
+  hljs.CSS_NUMBER_MODE = {
     className: 'number',
-    begin: this.NUMBER_RE + '(' +
+    begin: hljs.NUMBER_RE + '(' +
       '%|em|ex|ch|rem'  +
       '|vw|vh|vmin|vmax' +
       '|cm|mm|in|pt|pc|px' +
@@ -673,128 +744,176 @@ var Highlight = function() {
       ')?',
     relevance: 0
   };
-  this.REGEXP_MODE = {
+  hljs.REGEXP_MODE = {
     className: 'regexp',
-    begin: /\//, end: /\/[gim]*/,
+    begin: /\//, end: /\/[gimuy]*/,
     illegal: /\n/,
     contains: [
-      this.BACKSLASH_ESCAPE,
+      hljs.BACKSLASH_ESCAPE,
       {
         begin: /\[/, end: /\]/,
         relevance: 0,
-        contains: [this.BACKSLASH_ESCAPE]
+        contains: [hljs.BACKSLASH_ESCAPE]
       }
     ]
   };
-  this.TITLE_MODE = {
+  hljs.TITLE_MODE = {
     className: 'title',
-    begin: this.IDENT_RE,
+    begin: hljs.IDENT_RE,
     relevance: 0
   };
-  this.UNDERSCORE_TITLE_MODE = {
+  hljs.UNDERSCORE_TITLE_MODE = {
     className: 'title',
-    begin: this.UNDERSCORE_IDENT_RE,
+    begin: hljs.UNDERSCORE_IDENT_RE,
     relevance: 0
   };
-};
-module.exports = Highlight;
+
+  return hljs;
+}));
+
 },{}],2:[function(require,module,exports){
-var Highlight = require('./highlight');
-var hljs = new Highlight();
-hljs.registerLanguage('xml', require('./languages/xml.js'));
-hljs.registerLanguage('asciidoc', require('./languages/asciidoc.js'));
-hljs.registerLanguage('rsl', require('./languages/rsl.js'));
-hljs.registerLanguage('autohotkey', require('./languages/autohotkey.js'));
-hljs.registerLanguage('elixir', require('./languages/elixir.js'));
-hljs.registerLanguage('django', require('./languages/django.js'));
-hljs.registerLanguage('vhdl', require('./languages/vhdl.js'));
-hljs.registerLanguage('haxe', require('./languages/haxe.js'));
-hljs.registerLanguage('coffeescript', require('./languages/coffeescript.js'));
-hljs.registerLanguage('mel', require('./languages/mel.js'));
-hljs.registerLanguage('nginx', require('./languages/nginx.js'));
-hljs.registerLanguage('oxygene', require('./languages/oxygene.js'));
-hljs.registerLanguage('livecodeserver', require('./languages/livecodeserver.js'));
-hljs.registerLanguage('monkey', require('./languages/monkey.js'));
-hljs.registerLanguage('dust', require('./languages/dust.js'));
-hljs.registerLanguage('go', require('./languages/go.js'));
-hljs.registerLanguage('json', require('./languages/json.js'));
-hljs.registerLanguage('cmake', require('./languages/cmake.js'));
-hljs.registerLanguage('clojure', require('./languages/clojure.js'));
-hljs.registerLanguage('scheme', require('./languages/scheme.js'));
-hljs.registerLanguage('lasso', require('./languages/lasso.js'));
-hljs.registerLanguage('http', require('./languages/http.js'));
-hljs.registerLanguage('javascript', require('./languages/javascript.js'));
-hljs.registerLanguage('mizar', require('./languages/mizar.js'));
-hljs.registerLanguage('markdown', require('./languages/markdown.js'));
-hljs.registerLanguage('dart', require('./languages/dart.js'));
-hljs.registerLanguage('glsl', require('./languages/glsl.js'));
-hljs.registerLanguage('swift', require('./languages/swift.js'));
-hljs.registerLanguage('sql', require('./languages/sql.js'));
-hljs.registerLanguage('handlebars', require('./languages/handlebars.js'));
-hljs.registerLanguage('gherkin', require('./languages/gherkin.js'));
-hljs.registerLanguage('php', require('./languages/php.js'));
-hljs.registerLanguage('applescript', require('./languages/applescript.js'));
-hljs.registerLanguage('profile', require('./languages/profile.js'));
-hljs.registerLanguage('brainfuck', require('./languages/brainfuck.js'));
-hljs.registerLanguage('makefile', require('./languages/makefile.js'));
-hljs.registerLanguage('vbnet', require('./languages/vbnet.js'));
-hljs.registerLanguage('vala', require('./languages/vala.js'));
-hljs.registerLanguage('vbscript', require('./languages/vbscript.js'));
-hljs.registerLanguage('bash', require('./languages/bash.js'));
-hljs.registerLanguage('gcode', require('./languages/gcode.js'));
-hljs.registerLanguage('nimrod', require('./languages/nimrod.js'));
-hljs.registerLanguage('vim', require('./languages/vim.js'));
-hljs.registerLanguage('scss', require('./languages/scss.js'));
-hljs.registerLanguage('gradle', require('./languages/gradle.js'));
-hljs.registerLanguage('delphi', require('./languages/delphi.js'));
-hljs.registerLanguage('cpp', require('./languages/cpp.js'));
-hljs.registerLanguage('perl', require('./languages/perl.js'));
-hljs.registerLanguage('haskell', require('./languages/haskell.js'));
-hljs.registerLanguage('smalltalk', require('./languages/smalltalk.js'));
-hljs.registerLanguage('ini', require('./languages/ini.js'));
-hljs.registerLanguage('rib', require('./languages/rib.js'));
-hljs.registerLanguage('d', require('./languages/d.js'));
-hljs.registerLanguage('apache', require('./languages/apache.js'));
-hljs.registerLanguage('ruleslanguage', require('./languages/ruleslanguage.js'));
-hljs.registerLanguage('mathematica', require('./languages/mathematica.js'));
-hljs.registerLanguage('scala', require('./languages/scala.js'));
-hljs.registerLanguage('tex', require('./languages/tex.js'));
-hljs.registerLanguage('java', require('./languages/java.js'));
-hljs.registerLanguage('r', require('./languages/r.js'));
-hljs.registerLanguage('axapta', require('./languages/axapta.js'));
-hljs.registerLanguage('actionscript', require('./languages/actionscript.js'));
-hljs.registerLanguage('nix', require('./languages/nix.js'));
-hljs.registerLanguage('q', require('./languages/q.js'));
-hljs.registerLanguage('lisp', require('./languages/lisp.js'));
-hljs.registerLanguage('ruby', require('./languages/ruby.js'));
-hljs.registerLanguage('haml', require('./languages/haml.js'));
-hljs.registerLanguage('avrasm', require('./languages/avrasm.js'));
-hljs.registerLanguage('dos', require('./languages/dos.js'));
-hljs.registerLanguage('erlang', require('./languages/erlang.js'));
-hljs.registerLanguage('1c', require('./languages/1c.js'));
-hljs.registerLanguage('cs', require('./languages/cs.js'));
-hljs.registerLanguage('protobuf', require('./languages/protobuf.js'));
-hljs.registerLanguage('rust', require('./languages/rust.js'));
-hljs.registerLanguage('fsharp', require('./languages/fsharp.js'));
-hljs.registerLanguage('lua', require('./languages/lua.js'));
-hljs.registerLanguage('fix', require('./languages/fix.js'));
-hljs.registerLanguage('parser3', require('./languages/parser3.js'));
-hljs.registerLanguage('scilab', require('./languages/scilab.js'));
-hljs.registerLanguage('diff', require('./languages/diff.js'));
-hljs.registerLanguage('typescript', require('./languages/typescript.js'));
-hljs.registerLanguage('ocaml', require('./languages/ocaml.js'));
-hljs.registerLanguage('groovy', require('./languages/groovy.js'));
-hljs.registerLanguage('objectivec', require('./languages/objectivec.js'));
-hljs.registerLanguage('css', require('./languages/css.js'));
-hljs.registerLanguage('thrift', require('./languages/thrift.js'));
-hljs.registerLanguage('capnproto', require('./languages/capnproto.js'));
-hljs.registerLanguage('erlang-repl', require('./languages/erlang-repl.js'));
-hljs.registerLanguage('python', require('./languages/python.js'));
-hljs.registerLanguage('x86asm', require('./languages/x86asm.js'));
-hljs.registerLanguage('matlab', require('./languages/matlab.js'));
-hljs.registerLanguage('nsis', require('./languages/nsis.js'));
+var hljs = require('./highlight');
+
+hljs.registerLanguage('1c', require('./languages/1c'));
+hljs.registerLanguage('accesslog', require('./languages/accesslog'));
+hljs.registerLanguage('actionscript', require('./languages/actionscript'));
+hljs.registerLanguage('apache', require('./languages/apache'));
+hljs.registerLanguage('applescript', require('./languages/applescript'));
+hljs.registerLanguage('armasm', require('./languages/armasm'));
+hljs.registerLanguage('xml', require('./languages/xml'));
+hljs.registerLanguage('asciidoc', require('./languages/asciidoc'));
+hljs.registerLanguage('aspectj', require('./languages/aspectj'));
+hljs.registerLanguage('autohotkey', require('./languages/autohotkey'));
+hljs.registerLanguage('autoit', require('./languages/autoit'));
+hljs.registerLanguage('avrasm', require('./languages/avrasm'));
+hljs.registerLanguage('axapta', require('./languages/axapta'));
+hljs.registerLanguage('bash', require('./languages/bash'));
+hljs.registerLanguage('brainfuck', require('./languages/brainfuck'));
+hljs.registerLanguage('cal', require('./languages/cal'));
+hljs.registerLanguage('capnproto', require('./languages/capnproto'));
+hljs.registerLanguage('ceylon', require('./languages/ceylon'));
+hljs.registerLanguage('clojure', require('./languages/clojure'));
+hljs.registerLanguage('clojure-repl', require('./languages/clojure-repl'));
+hljs.registerLanguage('cmake', require('./languages/cmake'));
+hljs.registerLanguage('coffeescript', require('./languages/coffeescript'));
+hljs.registerLanguage('cpp', require('./languages/cpp'));
+hljs.registerLanguage('crmsh', require('./languages/crmsh'));
+hljs.registerLanguage('crystal', require('./languages/crystal'));
+hljs.registerLanguage('cs', require('./languages/cs'));
+hljs.registerLanguage('css', require('./languages/css'));
+hljs.registerLanguage('d', require('./languages/d'));
+hljs.registerLanguage('markdown', require('./languages/markdown'));
+hljs.registerLanguage('dart', require('./languages/dart'));
+hljs.registerLanguage('delphi', require('./languages/delphi'));
+hljs.registerLanguage('diff', require('./languages/diff'));
+hljs.registerLanguage('django', require('./languages/django'));
+hljs.registerLanguage('dns', require('./languages/dns'));
+hljs.registerLanguage('dockerfile', require('./languages/dockerfile'));
+hljs.registerLanguage('dos', require('./languages/dos'));
+hljs.registerLanguage('dust', require('./languages/dust'));
+hljs.registerLanguage('elixir', require('./languages/elixir'));
+hljs.registerLanguage('elm', require('./languages/elm'));
+hljs.registerLanguage('ruby', require('./languages/ruby'));
+hljs.registerLanguage('erb', require('./languages/erb'));
+hljs.registerLanguage('erlang-repl', require('./languages/erlang-repl'));
+hljs.registerLanguage('erlang', require('./languages/erlang'));
+hljs.registerLanguage('fix', require('./languages/fix'));
+hljs.registerLanguage('fortran', require('./languages/fortran'));
+hljs.registerLanguage('fsharp', require('./languages/fsharp'));
+hljs.registerLanguage('gams', require('./languages/gams'));
+hljs.registerLanguage('gcode', require('./languages/gcode'));
+hljs.registerLanguage('gherkin', require('./languages/gherkin'));
+hljs.registerLanguage('glsl', require('./languages/glsl'));
+hljs.registerLanguage('go', require('./languages/go'));
+hljs.registerLanguage('golo', require('./languages/golo'));
+hljs.registerLanguage('gradle', require('./languages/gradle'));
+hljs.registerLanguage('groovy', require('./languages/groovy'));
+hljs.registerLanguage('haml', require('./languages/haml'));
+hljs.registerLanguage('handlebars', require('./languages/handlebars'));
+hljs.registerLanguage('haskell', require('./languages/haskell'));
+hljs.registerLanguage('haxe', require('./languages/haxe'));
+hljs.registerLanguage('http', require('./languages/http'));
+hljs.registerLanguage('inform7', require('./languages/inform7'));
+hljs.registerLanguage('ini', require('./languages/ini'));
+hljs.registerLanguage('irpf90', require('./languages/irpf90'));
+hljs.registerLanguage('java', require('./languages/java'));
+hljs.registerLanguage('javascript', require('./languages/javascript'));
+hljs.registerLanguage('json', require('./languages/json'));
+hljs.registerLanguage('julia', require('./languages/julia'));
+hljs.registerLanguage('kotlin', require('./languages/kotlin'));
+hljs.registerLanguage('lasso', require('./languages/lasso'));
+hljs.registerLanguage('less', require('./languages/less'));
+hljs.registerLanguage('lisp', require('./languages/lisp'));
+hljs.registerLanguage('livecodeserver', require('./languages/livecodeserver'));
+hljs.registerLanguage('livescript', require('./languages/livescript'));
+hljs.registerLanguage('lua', require('./languages/lua'));
+hljs.registerLanguage('makefile', require('./languages/makefile'));
+hljs.registerLanguage('mathematica', require('./languages/mathematica'));
+hljs.registerLanguage('matlab', require('./languages/matlab'));
+hljs.registerLanguage('mel', require('./languages/mel'));
+hljs.registerLanguage('mercury', require('./languages/mercury'));
+hljs.registerLanguage('mizar', require('./languages/mizar'));
+hljs.registerLanguage('perl', require('./languages/perl'));
+hljs.registerLanguage('mojolicious', require('./languages/mojolicious'));
+hljs.registerLanguage('monkey', require('./languages/monkey'));
+hljs.registerLanguage('nginx', require('./languages/nginx'));
+hljs.registerLanguage('nimrod', require('./languages/nimrod'));
+hljs.registerLanguage('nix', require('./languages/nix'));
+hljs.registerLanguage('nsis', require('./languages/nsis'));
+hljs.registerLanguage('objectivec', require('./languages/objectivec'));
+hljs.registerLanguage('ocaml', require('./languages/ocaml'));
+hljs.registerLanguage('openscad', require('./languages/openscad'));
+hljs.registerLanguage('oxygene', require('./languages/oxygene'));
+hljs.registerLanguage('parser3', require('./languages/parser3'));
+hljs.registerLanguage('pf', require('./languages/pf'));
+hljs.registerLanguage('php', require('./languages/php'));
+hljs.registerLanguage('powershell', require('./languages/powershell'));
+hljs.registerLanguage('processing', require('./languages/processing'));
+hljs.registerLanguage('profile', require('./languages/profile'));
+hljs.registerLanguage('prolog', require('./languages/prolog'));
+hljs.registerLanguage('protobuf', require('./languages/protobuf'));
+hljs.registerLanguage('puppet', require('./languages/puppet'));
+hljs.registerLanguage('python', require('./languages/python'));
+hljs.registerLanguage('q', require('./languages/q'));
+hljs.registerLanguage('r', require('./languages/r'));
+hljs.registerLanguage('rib', require('./languages/rib'));
+hljs.registerLanguage('roboconf', require('./languages/roboconf'));
+hljs.registerLanguage('rsl', require('./languages/rsl'));
+hljs.registerLanguage('ruleslanguage', require('./languages/ruleslanguage'));
+hljs.registerLanguage('rust', require('./languages/rust'));
+hljs.registerLanguage('scala', require('./languages/scala'));
+hljs.registerLanguage('scheme', require('./languages/scheme'));
+hljs.registerLanguage('scilab', require('./languages/scilab'));
+hljs.registerLanguage('scss', require('./languages/scss'));
+hljs.registerLanguage('smali', require('./languages/smali'));
+hljs.registerLanguage('smalltalk', require('./languages/smalltalk'));
+hljs.registerLanguage('sml', require('./languages/sml'));
+hljs.registerLanguage('sqf', require('./languages/sqf'));
+hljs.registerLanguage('sql', require('./languages/sql'));
+hljs.registerLanguage('stata', require('./languages/stata'));
+hljs.registerLanguage('step21', require('./languages/step21'));
+hljs.registerLanguage('stylus', require('./languages/stylus'));
+hljs.registerLanguage('swift', require('./languages/swift'));
+hljs.registerLanguage('tcl', require('./languages/tcl'));
+hljs.registerLanguage('tex', require('./languages/tex'));
+hljs.registerLanguage('thrift', require('./languages/thrift'));
+hljs.registerLanguage('tp', require('./languages/tp'));
+hljs.registerLanguage('twig', require('./languages/twig'));
+hljs.registerLanguage('typescript', require('./languages/typescript'));
+hljs.registerLanguage('vala', require('./languages/vala'));
+hljs.registerLanguage('vbnet', require('./languages/vbnet'));
+hljs.registerLanguage('vbscript', require('./languages/vbscript'));
+hljs.registerLanguage('vbscript-html', require('./languages/vbscript-html'));
+hljs.registerLanguage('verilog', require('./languages/verilog'));
+hljs.registerLanguage('vhdl', require('./languages/vhdl'));
+hljs.registerLanguage('vim', require('./languages/vim'));
+hljs.registerLanguage('x86asm', require('./languages/x86asm'));
+hljs.registerLanguage('xl', require('./languages/xl'));
+hljs.registerLanguage('xquery', require('./languages/xquery'));
+hljs.registerLanguage('zephir', require('./languages/zephir'));
+
 module.exports = hljs;
-},{"./highlight":1,"./languages/1c.js":3,"./languages/actionscript.js":4,"./languages/apache.js":5,"./languages/applescript.js":6,"./languages/asciidoc.js":7,"./languages/autohotkey.js":8,"./languages/avrasm.js":9,"./languages/axapta.js":10,"./languages/bash.js":11,"./languages/brainfuck.js":12,"./languages/capnproto.js":13,"./languages/clojure.js":14,"./languages/cmake.js":15,"./languages/coffeescript.js":16,"./languages/cpp.js":17,"./languages/cs.js":18,"./languages/css.js":19,"./languages/d.js":20,"./languages/dart.js":21,"./languages/delphi.js":22,"./languages/diff.js":23,"./languages/django.js":24,"./languages/dos.js":25,"./languages/dust.js":26,"./languages/elixir.js":27,"./languages/erlang-repl.js":28,"./languages/erlang.js":29,"./languages/fix.js":30,"./languages/fsharp.js":31,"./languages/gcode.js":32,"./languages/gherkin.js":33,"./languages/glsl.js":34,"./languages/go.js":35,"./languages/gradle.js":36,"./languages/groovy.js":37,"./languages/haml.js":38,"./languages/handlebars.js":39,"./languages/haskell.js":40,"./languages/haxe.js":41,"./languages/http.js":42,"./languages/ini.js":43,"./languages/java.js":44,"./languages/javascript.js":45,"./languages/json.js":46,"./languages/lasso.js":47,"./languages/lisp.js":48,"./languages/livecodeserver.js":49,"./languages/lua.js":50,"./languages/makefile.js":51,"./languages/markdown.js":52,"./languages/mathematica.js":53,"./languages/matlab.js":54,"./languages/mel.js":55,"./languages/mizar.js":56,"./languages/monkey.js":57,"./languages/nginx.js":58,"./languages/nimrod.js":59,"./languages/nix.js":60,"./languages/nsis.js":61,"./languages/objectivec.js":62,"./languages/ocaml.js":63,"./languages/oxygene.js":64,"./languages/parser3.js":65,"./languages/perl.js":66,"./languages/php.js":67,"./languages/profile.js":68,"./languages/protobuf.js":69,"./languages/python.js":70,"./languages/q.js":71,"./languages/r.js":72,"./languages/rib.js":73,"./languages/rsl.js":74,"./languages/ruby.js":75,"./languages/ruleslanguage.js":76,"./languages/rust.js":77,"./languages/scala.js":78,"./languages/scheme.js":79,"./languages/scilab.js":80,"./languages/scss.js":81,"./languages/smalltalk.js":82,"./languages/sql.js":83,"./languages/swift.js":84,"./languages/tex.js":85,"./languages/thrift.js":86,"./languages/typescript.js":87,"./languages/vala.js":88,"./languages/vbnet.js":89,"./languages/vbscript.js":90,"./languages/vhdl.js":91,"./languages/vim.js":92,"./languages/x86asm.js":93,"./languages/xml.js":94}],3:[function(require,module,exports){
+},{"./highlight":1,"./languages/1c":3,"./languages/accesslog":4,"./languages/actionscript":5,"./languages/apache":6,"./languages/applescript":7,"./languages/armasm":8,"./languages/asciidoc":9,"./languages/aspectj":10,"./languages/autohotkey":11,"./languages/autoit":12,"./languages/avrasm":13,"./languages/axapta":14,"./languages/bash":15,"./languages/brainfuck":16,"./languages/cal":17,"./languages/capnproto":18,"./languages/ceylon":19,"./languages/clojure":21,"./languages/clojure-repl":20,"./languages/cmake":22,"./languages/coffeescript":23,"./languages/cpp":24,"./languages/crmsh":25,"./languages/crystal":26,"./languages/cs":27,"./languages/css":28,"./languages/d":29,"./languages/dart":30,"./languages/delphi":31,"./languages/diff":32,"./languages/django":33,"./languages/dns":34,"./languages/dockerfile":35,"./languages/dos":36,"./languages/dust":37,"./languages/elixir":38,"./languages/elm":39,"./languages/erb":40,"./languages/erlang":42,"./languages/erlang-repl":41,"./languages/fix":43,"./languages/fortran":44,"./languages/fsharp":45,"./languages/gams":46,"./languages/gcode":47,"./languages/gherkin":48,"./languages/glsl":49,"./languages/go":50,"./languages/golo":51,"./languages/gradle":52,"./languages/groovy":53,"./languages/haml":54,"./languages/handlebars":55,"./languages/haskell":56,"./languages/haxe":57,"./languages/http":58,"./languages/inform7":59,"./languages/ini":60,"./languages/irpf90":61,"./languages/java":62,"./languages/javascript":63,"./languages/json":64,"./languages/julia":65,"./languages/kotlin":66,"./languages/lasso":67,"./languages/less":68,"./languages/lisp":69,"./languages/livecodeserver":70,"./languages/livescript":71,"./languages/lua":72,"./languages/makefile":73,"./languages/markdown":74,"./languages/mathematica":75,"./languages/matlab":76,"./languages/mel":77,"./languages/mercury":78,"./languages/mizar":79,"./languages/mojolicious":80,"./languages/monkey":81,"./languages/nginx":82,"./languages/nimrod":83,"./languages/nix":84,"./languages/nsis":85,"./languages/objectivec":86,"./languages/ocaml":87,"./languages/openscad":88,"./languages/oxygene":89,"./languages/parser3":90,"./languages/perl":91,"./languages/pf":92,"./languages/php":93,"./languages/powershell":94,"./languages/processing":95,"./languages/profile":96,"./languages/prolog":97,"./languages/protobuf":98,"./languages/puppet":99,"./languages/python":100,"./languages/q":101,"./languages/r":102,"./languages/rib":103,"./languages/roboconf":104,"./languages/rsl":105,"./languages/ruby":106,"./languages/ruleslanguage":107,"./languages/rust":108,"./languages/scala":109,"./languages/scheme":110,"./languages/scilab":111,"./languages/scss":112,"./languages/smali":113,"./languages/smalltalk":114,"./languages/sml":115,"./languages/sqf":116,"./languages/sql":117,"./languages/stata":118,"./languages/step21":119,"./languages/stylus":120,"./languages/swift":121,"./languages/tcl":122,"./languages/tex":123,"./languages/thrift":124,"./languages/tp":125,"./languages/twig":126,"./languages/typescript":127,"./languages/vala":128,"./languages/vbnet":129,"./languages/vbscript":131,"./languages/vbscript-html":130,"./languages/verilog":132,"./languages/vhdl":133,"./languages/vim":134,"./languages/x86asm":135,"./languages/xl":136,"./languages/xml":137,"./languages/xquery":138,"./languages/zephir":139}],3:[function(require,module,exports){
 module.exports = function(hljs){
   var IDENT_RE_RU = '[a-zA-Zа-яА-Я][a-zA-Z0-9_а-яА-Я]*';
   var OneS_KEYWORDS = 'возврат дата для если и или иначе иначеесли исключение конецесли ' +
@@ -882,6 +1001,44 @@ module.exports = function(hljs){
 };
 },{}],4:[function(require,module,exports){
 module.exports = function(hljs) {
+  return {
+    contains: [
+      // IP
+      {
+        className: 'number',
+        begin: '\\b\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}(:\\d{1,5})?\\b'
+      },
+      // Other numbers
+      {
+        className: 'number',
+        begin: '\\b\\d+\\b',
+        relevance: 0
+      },
+      // Requests
+      {
+        className: 'string',
+        begin: '"(GET|POST|HEAD|PUT|DELETE|CONNECT|OPTIONS|PATCH|TRACE)', end: '"',
+        keywords: 'GET POST HEAD PUT DELETE CONNECT OPTIONS PATCH TRACE',
+        illegal: '\\n',
+        relevance: 10
+      },
+      // Dates
+      {
+        className: 'string',
+        begin: /\[/, end: /\]/,
+        illegal: '\\n'
+      },
+      // Strings
+      {
+        className: 'string',
+        begin: '"', end: '"',
+        illegal: '\\n'
+      }
+    ]
+  };
+};
+},{}],5:[function(require,module,exports){
+module.exports = function(hljs) {
   var IDENT_RE = '[a-zA-Z_$][a-zA-Z0-9_$]*';
   var IDENT_FUNC_RETURN_TYPE_RE = '([*]|[a-zA-Z_$][a-zA-Z0-9_$]*)';
 
@@ -951,10 +1108,11 @@ module.exports = function(hljs) {
           }
         ]
       }
-    ]
+    ],
+    illegal: /#/
   };
 };
-},{}],5:[function(require,module,exports){
+},{}],6:[function(require,module,exports){
 module.exports = function(hljs) {
   var NUMBER = {className: 'number', begin: '[\\$%]\\d+'};
   return {
@@ -1000,7 +1158,7 @@ module.exports = function(hljs) {
     illegal: /\S/
   };
 };
-},{}],6:[function(require,module,exports){
+},{}],7:[function(require,module,exports){
 module.exports = function(hljs) {
   var STRING = hljs.inherit(hljs.QUOTE_STRING_MODE, {illegal: ''});
   var PARAMS = {
@@ -1008,16 +1166,17 @@ module.exports = function(hljs) {
     begin: '\\(', end: '\\)',
     contains: ['self', hljs.C_NUMBER_MODE, STRING]
   };
+  var COMMENT_MODE_1 = hljs.COMMENT('--', '$');
+  var COMMENT_MODE_2 = hljs.COMMENT(
+    '\\(\\*',
+    '\\*\\)',
+    {
+      contains: ['self', COMMENT_MODE_1] //allow nesting
+    }
+  );
   var COMMENTS = [
-    {
-      className: 'comment',
-      begin: '--', end: '$'
-    },
-    {
-      className: 'comment',
-      begin: '\\(\\*', end: '\\*\\)',
-      contains: ['self', {begin: '--', end: '$'}] //allow nesting
-    },
+    COMMENT_MODE_1,
+    COMMENT_MODE_2,
     hljs.HASH_COMMENT_MODE
   ];
 
@@ -1093,30 +1252,125 @@ module.exports = function(hljs) {
         contains: [hljs.UNDERSCORE_TITLE_MODE, PARAMS]
       }
     ].concat(COMMENTS),
-    illegal: '//'
+    illegal: '//|->|=>|\\[\\['
   };
 };
-},{}],7:[function(require,module,exports){
+},{}],8:[function(require,module,exports){
 module.exports = function(hljs) {
+    //local labels: %?[FB]?[AT]?\d{1,2}\w+
   return {
+    case_insensitive: true,
+    aliases: ['arm'],
+    lexemes: '\\.?' + hljs.IDENT_RE,
+    keywords: {
+      literal:
+        'r0 r1 r2 r3 r4 r5 r6 r7 r8 r9 r10 r11 r12 r13 r14 r15 '+ //standard registers
+        'pc lr sp ip sl sb fp '+ //typical regs plus backward compatibility
+        'a1 a2 a3 a4 v1 v2 v3 v4 v5 v6 v7 v8 f0 f1 f2 f3 f4 f5 f6 f7 '+ //more regs and fp
+        'p0 p1 p2 p3 p4 p5 p6 p7 p8 p9 p10 p11 p12 p13 p14 p15 '+ //coprocessor regs
+        'c0 c1 c2 c3 c4 c5 c6 c7 c8 c9 c10 c11 c12 c13 c14 c15 '+ //more coproc
+        'q0 q1 q2 q3 q4 q5 q6 q7 q8 q9 q10 q11 q12 q13 q14 q15 '+ //advanced SIMD NEON regs
+
+        //program status registers
+        'cpsr_c cpsr_x cpsr_s cpsr_f cpsr_cx cpsr_cxs cpsr_xs cpsr_xsf cpsr_sf cpsr_cxsf '+
+        'spsr_c spsr_x spsr_s spsr_f spsr_cx spsr_cxs spsr_xs spsr_xsf spsr_sf spsr_cxsf '+
+
+        //NEON and VFP registers
+        's0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 '+
+        's16 s17 s18 s19 s20 s21 s22 s23 s24 s25 s26 s27 s28 s29 s30 s31 '+
+        'd0 d1 d2 d3 d4 d5 d6 d7 d8 d9 d10 d11 d12 d13 d14 d15 '+
+        'd16 d17 d18 d19 d20 d21 d22 d23 d24 d25 d26 d27 d28 d29 d30 d31 ',
+    preprocessor:
+        //GNU preprocs
+        '.2byte .4byte .align .ascii .asciz .balign .byte .code .data .else .end .endif .endm .endr .equ .err .exitm .extern .global .hword .if .ifdef .ifndef .include .irp .long .macro .rept .req .section .set .skip .space .text .word .arm .thumb .code16 .code32 .force_thumb .thumb_func .ltorg '+
+        //ARM directives
+        'ALIAS ALIGN ARM AREA ASSERT ATTR CN CODE CODE16 CODE32 COMMON CP DATA DCB DCD DCDU DCDO DCFD DCFDU DCI DCQ DCQU DCW DCWU DN ELIF ELSE END ENDFUNC ENDIF ENDP ENTRY EQU EXPORT EXPORTAS EXTERN FIELD FILL FUNCTION GBLA GBLL GBLS GET GLOBAL IF IMPORT INCBIN INCLUDE INFO KEEP LCLA LCLL LCLS LTORG MACRO MAP MEND MEXIT NOFP OPT PRESERVE8 PROC QN READONLY RELOC REQUIRE REQUIRE8 RLIST FN ROUT SETA SETL SETS SN SPACE SUBT THUMB THUMBX TTL WHILE WEND ',
+    built_in:
+        '{PC} {VAR} {TRUE} {FALSE} {OPT} {CONFIG} {ENDIAN} {CODESIZE} {CPU} {FPU} {ARCHITECTURE} {PCSTOREOFFSET} {ARMASM_VERSION} {INTER} {ROPI} {RWPI} {SWST} {NOSWST} . @ '
+    },
     contains: [
-      // block comment
       {
-        className: 'comment',
-        begin: '^/{4,}\\n',
-        end: '\\n/{4,}$',
-        // can also be done as...
-        //begin: '^/{4,}$',
-        //end: '^/{4,}$',
-        relevance: 10
+        className: 'keyword',
+        begin: '\\b('+     //mnemonics
+            'adc|'+
+            '(qd?|sh?|u[qh]?)?add(8|16)?|usada?8|(q|sh?|u[qh]?)?(as|sa)x|'+
+            'and|adrl?|sbc|rs[bc]|asr|b[lx]?|blx|bxj|cbn?z|tb[bh]|bic|'+
+            'bfc|bfi|[su]bfx|bkpt|cdp2?|clz|clrex|cmp|cmn|cpsi[ed]|cps|'+
+            'setend|dbg|dmb|dsb|eor|isb|it[te]{0,3}|lsl|lsr|ror|rrx|'+
+            'ldm(([id][ab])|f[ds])?|ldr((s|ex)?[bhd])?|movt?|mvn|mra|mar|'+
+            'mul|[us]mull|smul[bwt][bt]|smu[as]d|smmul|smmla|'+
+            'mla|umlaal|smlal?([wbt][bt]|d)|mls|smlsl?[ds]|smc|svc|sev|'+
+            'mia([bt]{2}|ph)?|mrr?c2?|mcrr2?|mrs|msr|orr|orn|pkh(tb|bt)|rbit|'+
+            'rev(16|sh)?|sel|[su]sat(16)?|nop|pop|push|rfe([id][ab])?|'+
+            'stm([id][ab])?|str(ex)?[bhd]?|(qd?)?sub|(sh?|q|u[qh]?)?sub(8|16)|'+
+            '[su]xt(a?h|a?b(16)?)|srs([id][ab])?|swpb?|swi|smi|tst|teq|'+
+            'wfe|wfi|yield'+
+        ')'+
+        '(eq|ne|cs|cc|mi|pl|vs|vc|hi|ls|ge|lt|gt|le|al|hs|lo)?'+ //condition codes
+        '[sptrx]?' ,                                             //legal postfixes
+        end: '\\s'
       },
-      // line comment
+      hljs.COMMENT('[;@]', '$', {relevance: 0}),
+      hljs.C_BLOCK_COMMENT_MODE,
+      hljs.QUOTE_STRING_MODE,
       {
-        className: 'comment',
-        begin: '^//',
-        end: '$',
+        className: 'string',
+        begin: '\'',
+        end: '[^\\\\]\'',
         relevance: 0
       },
+      {
+        className: 'title',
+        begin: '\\|', end: '\\|',
+        illegal: '\\n',
+        relevance: 0
+      },
+      {
+        className: 'number',
+        variants: [
+            {begin: '[#$=]?0x[0-9a-f]+'}, //hex
+            {begin: '[#$=]?0b[01]+'},     //bin
+            {begin: '[#$=]\\d+'},        //literal
+            {begin: '\\b\\d+'}           //bare number
+        ],
+        relevance: 0
+      },
+      {
+        className: 'label',
+        variants: [
+            {begin: '^[a-z_\\.\\$][a-z0-9_\\.\\$]+'}, //ARM syntax
+            {begin: '^\\s*[a-z_\\.\\$][a-z0-9_\\.\\$]+:'}, //GNU ARM syntax
+            {begin: '[=#]\\w+' }  //label reference
+        ],
+        relevance: 0
+      }
+    ]
+  };
+};
+},{}],9:[function(require,module,exports){
+module.exports = function(hljs) {
+  return {
+    aliases: ['adoc'],
+    contains: [
+      // block comment
+      hljs.COMMENT(
+        '^/{4,}\\n',
+        '\\n/{4,}$',
+        // can also be done as...
+        //'^/{4,}$',
+        //'^/{4,}$',
+        {
+          relevance: 10
+        }
+      ),
+      // line comment
+      hljs.COMMENT(
+        '^//',
+        '$',
+        {
+          relevance: 0
+        }
+      ),
       // title
       {
         className: 'title',
@@ -1228,17 +1482,13 @@ module.exports = function(hljs) {
         end: '(\\n{2}|_)',
         relevance: 0
       },
-      // inline double smart quotes
+      // inline smart quotes
       {
         className: 'smartquote',
-        begin: "``.+?''",
-        relevance: 10
-      },
-      // inline single smart quotes
-      {
-        className: 'smartquote',
-        begin: "`.+?'",
-        relevance: 10
+        variants: [
+          {begin: "``.+?''"},
+          {begin: "`.+?'"}
+        ]
       },
       // inline code snippets (TODO should get same treatment as strong and emphasis)
       {
@@ -1289,17 +1539,157 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],8:[function(require,module,exports){
+},{}],10:[function(require,module,exports){
+module.exports = function (hljs) {
+  var KEYWORDS =
+    'false synchronized int abstract float private char boolean static null if const ' +
+    'for true while long throw strictfp finally protected import native final return void ' +
+    'enum else extends implements break transient new catch instanceof byte super volatile case ' +
+    'assert short package default double public try this switch continue throws privileged ' +
+    'aspectOf adviceexecution proceed cflowbelow cflow initialization preinitialization ' +
+    'staticinitialization withincode target within execution getWithinTypeName handler ' +
+    'thisJoinPoint thisJoinPointStaticPart thisEnclosingJoinPointStaticPart declare parents '+
+    'warning error soft precedence thisAspectInstance';
+  var SHORTKEYS = 'get set args call';
+  return {
+    keywords : KEYWORDS,
+    illegal : /<\/|#/,
+    contains : [
+      hljs.COMMENT(
+        '/\\*\\*',
+        '\\*/',
+        {
+          relevance : 0,
+          contains : [{
+            className : 'doctag',
+            begin : '@[A-Za-z]+'
+          }]
+        }
+      ),
+      hljs.C_LINE_COMMENT_MODE,
+      hljs.C_BLOCK_COMMENT_MODE,
+      hljs.APOS_STRING_MODE,
+      hljs.QUOTE_STRING_MODE,
+      {
+        className : 'aspect',
+        beginKeywords : 'aspect',
+        end : /[{;=]/,
+        excludeEnd : true,
+        illegal : /[:;"\[\]]/,
+        contains : [
+          {
+            beginKeywords : 'extends implements pertypewithin perthis pertarget percflowbelow percflow issingleton'
+          },
+          hljs.UNDERSCORE_TITLE_MODE,
+          {
+            begin : /\([^\)]*/,
+            end : /[)]+/,
+            keywords : KEYWORDS + ' ' + SHORTKEYS,
+            excludeEnd : false
+          }
+        ]
+      },
+      {
+        className : 'class',
+        beginKeywords : 'class interface',
+        end : /[{;=]/,
+        excludeEnd : true,
+        relevance: 0,
+        keywords : 'class interface',
+        illegal : /[:"\[\]]/,
+        contains : [
+          {beginKeywords : 'extends implements'},
+          hljs.UNDERSCORE_TITLE_MODE
+        ]
+      },
+      {
+        // AspectJ Constructs
+        beginKeywords : 'pointcut after before around throwing returning',
+        end : /[)]/,
+        excludeEnd : false,
+        illegal : /["\[\]]/,
+        contains : [
+          {
+            begin : hljs.UNDERSCORE_IDENT_RE + '\\s*\\(',
+            returnBegin : true,
+            contains : [hljs.UNDERSCORE_TITLE_MODE]
+          }
+        ]
+      },
+      {
+        begin : /[:]/,
+        returnBegin : true,
+        end : /[{;]/,
+        relevance: 0,
+        excludeEnd : false,
+        keywords : KEYWORDS,
+        illegal : /["\[\]]/,
+        contains : [
+          {
+            begin : hljs.UNDERSCORE_IDENT_RE + '\\s*\\(',
+            keywords : KEYWORDS + ' ' + SHORTKEYS
+          },
+          hljs.QUOTE_STRING_MODE
+        ]
+      },
+      {
+        // this prevents 'new Name(...), or throw ...' from being recognized as a function definition
+        beginKeywords : 'new throw',
+        relevance : 0
+      },
+      {
+        // the function class is a bit different for AspectJ compared to the Java language
+        className : 'function',
+        begin : /\w+ +\w+(\.)?\w+\s*\([^\)]*\)\s*((throws)[\w\s,]+)?[\{;]/,
+        returnBegin : true,
+        end : /[{;=]/,
+        keywords : KEYWORDS,
+        excludeEnd : true,
+        contains : [
+          {
+            begin : hljs.UNDERSCORE_IDENT_RE + '\\s*\\(',
+            returnBegin : true,
+            relevance: 0,
+            contains : [hljs.UNDERSCORE_TITLE_MODE]
+          },
+          {
+            className : 'params',
+            begin : /\(/, end : /\)/,
+            relevance: 0,
+            keywords : KEYWORDS,
+            contains : [
+              hljs.APOS_STRING_MODE,
+              hljs.QUOTE_STRING_MODE,
+              hljs.C_NUMBER_MODE,
+              hljs.C_BLOCK_COMMENT_MODE
+            ]
+          },
+          hljs.C_LINE_COMMENT_MODE,
+          hljs.C_BLOCK_COMMENT_MODE
+        ]
+      },
+      hljs.C_NUMBER_MODE,
+      {
+        // annotation is also used in this language
+        className : 'annotation',
+        begin : '@[A-Za-z]+'
+      }
+    ]
+  };
+};
+},{}],11:[function(require,module,exports){
 module.exports = function(hljs) {
   var BACKTICK_ESCAPE = {
     className: 'escape',
     begin: '`[\\s\\S]'
   };
-  var COMMENTS = {
-    className: 'comment',
-    begin: ';', end: '$',
-    relevance: 0
-  };
+  var COMMENTS = hljs.COMMENT(
+    ';',
+    '$',
+    {
+      relevance: 0
+    }
+  );
   var BUILT_IN = [
     {
       className: 'built_in',
@@ -1349,7 +1739,1762 @@ module.exports = function(hljs) {
     ])
   }
 };
-},{}],9:[function(require,module,exports){
+},{}],12:[function(require,module,exports){
+module.exports = function(hljs) {
+    var KEYWORDS = 'ByRef Case Const ContinueCase ContinueLoop ' +
+        'Default Dim Do Else ElseIf EndFunc EndIf EndSelect ' +
+        'EndSwitch EndWith Enum Exit ExitLoop For Func ' +
+        'Global If In Local Next ReDim Return Select Static ' +
+        'Step Switch Then To Until Volatile WEnd While With',
+
+        LITERAL = 'True False And Null Not Or',
+
+        BUILT_IN = 'Abs ACos AdlibRegister AdlibUnRegister Asc AscW ASin ' +
+        'Assign ATan AutoItSetOption AutoItWinGetTitle ' +
+        'AutoItWinSetTitle Beep Binary BinaryLen BinaryMid ' +
+        'BinaryToString BitAND BitNOT BitOR BitRotate BitShift ' +
+        'BitXOR BlockInput Break Call CDTray Ceiling Chr ' +
+        'ChrW ClipGet ClipPut ConsoleRead ConsoleWrite ' +
+        'ConsoleWriteError ControlClick ControlCommand ' +
+        'ControlDisable ControlEnable ControlFocus ControlGetFocus ' +
+        'ControlGetHandle ControlGetPos ControlGetText ControlHide ' +
+        'ControlListView ControlMove ControlSend ControlSetText ' +
+        'ControlShow ControlTreeView Cos Dec DirCopy DirCreate ' +
+        'DirGetSize DirMove DirRemove DllCall DllCallAddress ' +
+        'DllCallbackFree DllCallbackGetPtr DllCallbackRegister ' +
+        'DllClose DllOpen DllStructCreate DllStructGetData ' +
+        'DllStructGetPtr DllStructGetSize DllStructSetData ' +
+        'DriveGetDrive DriveGetFileSystem DriveGetLabel ' +
+        'DriveGetSerial DriveGetType DriveMapAdd DriveMapDel ' +
+        'DriveMapGet DriveSetLabel DriveSpaceFree DriveSpaceTotal ' +
+        'DriveStatus EnvGet EnvSet EnvUpdate Eval Execute Exp ' +
+        'FileChangeDir FileClose FileCopy FileCreateNTFSLink ' +
+        'FileCreateShortcut FileDelete FileExists FileFindFirstFile ' +
+        'FileFindNextFile FileFlush FileGetAttrib FileGetEncoding ' +
+        'FileGetLongName FileGetPos FileGetShortcut FileGetShortName ' +
+        'FileGetSize FileGetTime FileGetVersion FileInstall ' +
+        'FileMove FileOpen FileOpenDialog FileRead FileReadLine ' +
+        'FileReadToArray FileRecycle FileRecycleEmpty FileSaveDialog ' +
+        'FileSelectFolder FileSetAttrib FileSetEnd FileSetPos ' +
+        'FileSetTime FileWrite FileWriteLine Floor FtpSetProxy ' +
+        'FuncName GUICreate GUICtrlCreateAvi GUICtrlCreateButton ' +
+        'GUICtrlCreateCheckbox GUICtrlCreateCombo ' +
+        'GUICtrlCreateContextMenu GUICtrlCreateDate GUICtrlCreateDummy ' +
+        'GUICtrlCreateEdit GUICtrlCreateGraphic GUICtrlCreateGroup ' +
+        'GUICtrlCreateIcon GUICtrlCreateInput GUICtrlCreateLabel ' +
+        'GUICtrlCreateList GUICtrlCreateListView ' +
+        'GUICtrlCreateListViewItem GUICtrlCreateMenu ' +
+        'GUICtrlCreateMenuItem GUICtrlCreateMonthCal GUICtrlCreateObj ' +
+        'GUICtrlCreatePic GUICtrlCreateProgress GUICtrlCreateRadio ' +
+        'GUICtrlCreateSlider GUICtrlCreateTab GUICtrlCreateTabItem ' +
+        'GUICtrlCreateTreeView GUICtrlCreateTreeViewItem ' +
+        'GUICtrlCreateUpdown GUICtrlDelete GUICtrlGetHandle ' +
+        'GUICtrlGetState GUICtrlRead GUICtrlRecvMsg ' +
+        'GUICtrlRegisterListViewSort GUICtrlSendMsg GUICtrlSendToDummy ' +
+        'GUICtrlSetBkColor GUICtrlSetColor GUICtrlSetCursor ' +
+        'GUICtrlSetData GUICtrlSetDefBkColor GUICtrlSetDefColor ' +
+        'GUICtrlSetFont GUICtrlSetGraphic GUICtrlSetImage ' +
+        'GUICtrlSetLimit GUICtrlSetOnEvent GUICtrlSetPos ' +
+        'GUICtrlSetResizing GUICtrlSetState GUICtrlSetStyle ' +
+        'GUICtrlSetTip GUIDelete GUIGetCursorInfo GUIGetMsg ' +
+        'GUIGetStyle GUIRegisterMsg GUISetAccelerators GUISetBkColor ' +
+        'GUISetCoord GUISetCursor GUISetFont GUISetHelp GUISetIcon ' +
+        'GUISetOnEvent GUISetState GUISetStyle GUIStartGroup ' +
+        'GUISwitch Hex HotKeySet HttpSetProxy HttpSetUserAgent ' +
+        'HWnd InetClose InetGet InetGetInfo InetGetSize InetRead ' +
+        'IniDelete IniRead IniReadSection IniReadSectionNames ' +
+        'IniRenameSection IniWrite IniWriteSection InputBox Int ' +
+        'IsAdmin IsArray IsBinary IsBool IsDeclared IsDllStruct ' +
+        'IsFloat IsFunc IsHWnd IsInt IsKeyword IsNumber IsObj ' +
+        'IsPtr IsString Log MemGetStats Mod MouseClick ' +
+        'MouseClickDrag MouseDown MouseGetCursor MouseGetPos ' +
+        'MouseMove MouseUp MouseWheel MsgBox Number ObjCreate ' +
+        'ObjCreateInterface ObjEvent ObjGet ObjName ' +
+        'OnAutoItExitRegister OnAutoItExitUnRegister Opt Ping ' +
+        'PixelChecksum PixelGetColor PixelSearch ProcessClose ' +
+        'ProcessExists ProcessGetStats ProcessList ' +
+        'ProcessSetPriority ProcessWait ProcessWaitClose ProgressOff ' +
+        'ProgressOn ProgressSet Ptr Random RegDelete RegEnumKey ' +
+        'RegEnumVal RegRead RegWrite Round Run RunAs RunAsWait ' +
+        'RunWait Send SendKeepActive SetError SetExtended ' +
+        'ShellExecute ShellExecuteWait Shutdown Sin Sleep ' +
+        'SoundPlay SoundSetWaveVolume SplashImageOn SplashOff ' +
+        'SplashTextOn Sqrt SRandom StatusbarGetText StderrRead ' +
+        'StdinWrite StdioClose StdoutRead String StringAddCR ' +
+        'StringCompare StringFormat StringFromASCIIArray StringInStr ' +
+        'StringIsAlNum StringIsAlpha StringIsASCII StringIsDigit ' +
+        'StringIsFloat StringIsInt StringIsLower StringIsSpace ' +
+        'StringIsUpper StringIsXDigit StringLeft StringLen ' +
+        'StringLower StringMid StringRegExp StringRegExpReplace ' +
+        'StringReplace StringReverse StringRight StringSplit ' +
+        'StringStripCR StringStripWS StringToASCIIArray ' +
+        'StringToBinary StringTrimLeft StringTrimRight StringUpper ' +
+        'Tan TCPAccept TCPCloseSocket TCPConnect TCPListen ' +
+        'TCPNameToIP TCPRecv TCPSend TCPShutdown TCPStartup ' +
+        'TimerDiff TimerInit ToolTip TrayCreateItem TrayCreateMenu ' +
+        'TrayGetMsg TrayItemDelete TrayItemGetHandle ' +
+        'TrayItemGetState TrayItemGetText TrayItemSetOnEvent ' +
+        'TrayItemSetState TrayItemSetText TraySetClick TraySetIcon ' +
+        'TraySetOnEvent TraySetPauseIcon TraySetState TraySetToolTip ' +
+        'TrayTip UBound UDPBind UDPCloseSocket UDPOpen UDPRecv ' +
+        'UDPSend UDPShutdown UDPStartup VarGetType WinActivate ' +
+        'WinActive WinClose WinExists WinFlash WinGetCaretPos ' +
+        'WinGetClassList WinGetClientSize WinGetHandle WinGetPos ' +
+        'WinGetProcess WinGetState WinGetText WinGetTitle WinKill ' +
+        'WinList WinMenuSelectItem WinMinimizeAll WinMinimizeAllUndo ' +
+        'WinMove WinSetOnTop WinSetState WinSetTitle WinSetTrans ' +
+        'WinWait WinWaitActive WinWaitClose WinWaitNotActive ' +
+        'Array1DToHistogram ArrayAdd ArrayBinarySearch ' +
+        'ArrayColDelete ArrayColInsert ArrayCombinations ' +
+        'ArrayConcatenate ArrayDelete ArrayDisplay ArrayExtract ' +
+        'ArrayFindAll ArrayInsert ArrayMax ArrayMaxIndex ArrayMin ' +
+        'ArrayMinIndex ArrayPermute ArrayPop ArrayPush ' +
+        'ArrayReverse ArraySearch ArrayShuffle ArraySort ArraySwap ' +
+        'ArrayToClip ArrayToString ArrayTranspose ArrayTrim ' +
+        'ArrayUnique Assert ChooseColor ChooseFont ' +
+        'ClipBoard_ChangeChain ClipBoard_Close ClipBoard_CountFormats ' +
+        'ClipBoard_Empty ClipBoard_EnumFormats ClipBoard_FormatStr ' +
+        'ClipBoard_GetData ClipBoard_GetDataEx ClipBoard_GetFormatName ' +
+        'ClipBoard_GetOpenWindow ClipBoard_GetOwner ' +
+        'ClipBoard_GetPriorityFormat ClipBoard_GetSequenceNumber ' +
+        'ClipBoard_GetViewer ClipBoard_IsFormatAvailable ' +
+        'ClipBoard_Open ClipBoard_RegisterFormat ClipBoard_SetData ' +
+        'ClipBoard_SetDataEx ClipBoard_SetViewer ClipPutFile ' +
+        'ColorConvertHSLtoRGB ColorConvertRGBtoHSL ColorGetBlue ' +
+        'ColorGetCOLORREF ColorGetGreen ColorGetRed ColorGetRGB ' +
+        'ColorSetCOLORREF ColorSetRGB Crypt_DecryptData ' +
+        'Crypt_DecryptFile Crypt_DeriveKey Crypt_DestroyKey ' +
+        'Crypt_EncryptData Crypt_EncryptFile Crypt_GenRandom ' +
+        'Crypt_HashData Crypt_HashFile Crypt_Shutdown Crypt_Startup ' +
+        'DateAdd DateDayOfWeek DateDaysInMonth DateDiff ' +
+        'DateIsLeapYear DateIsValid DateTimeFormat DateTimeSplit ' +
+        'DateToDayOfWeek DateToDayOfWeekISO DateToDayValue ' +
+        'DateToMonth Date_Time_CompareFileTime ' +
+        'Date_Time_DOSDateTimeToArray Date_Time_DOSDateTimeToFileTime ' +
+        'Date_Time_DOSDateTimeToStr Date_Time_DOSDateToArray ' +
+        'Date_Time_DOSDateToStr Date_Time_DOSTimeToArray ' +
+        'Date_Time_DOSTimeToStr Date_Time_EncodeFileTime ' +
+        'Date_Time_EncodeSystemTime Date_Time_FileTimeToArray ' +
+        'Date_Time_FileTimeToDOSDateTime ' +
+        'Date_Time_FileTimeToLocalFileTime Date_Time_FileTimeToStr ' +
+        'Date_Time_FileTimeToSystemTime Date_Time_GetFileTime ' +
+        'Date_Time_GetLocalTime Date_Time_GetSystemTime ' +
+        'Date_Time_GetSystemTimeAdjustment ' +
+        'Date_Time_GetSystemTimeAsFileTime Date_Time_GetSystemTimes ' +
+        'Date_Time_GetTickCount Date_Time_GetTimeZoneInformation ' +
+        'Date_Time_LocalFileTimeToFileTime Date_Time_SetFileTime ' +
+        'Date_Time_SetLocalTime Date_Time_SetSystemTime ' +
+        'Date_Time_SetSystemTimeAdjustment ' +
+        'Date_Time_SetTimeZoneInformation Date_Time_SystemTimeToArray ' +
+        'Date_Time_SystemTimeToDateStr Date_Time_SystemTimeToDateTimeStr ' +
+        'Date_Time_SystemTimeToFileTime Date_Time_SystemTimeToTimeStr ' +
+        'Date_Time_SystemTimeToTzSpecificLocalTime ' +
+        'Date_Time_TzSpecificLocalTimeToSystemTime DayValueToDate ' +
+        'DebugBugReportEnv DebugCOMError DebugOut DebugReport ' +
+        'DebugReportEx DebugReportVar DebugSetup Degree ' +
+        'EventLog__Backup EventLog__Clear EventLog__Close ' +
+        'EventLog__Count EventLog__DeregisterSource EventLog__Full ' +
+        'EventLog__Notify EventLog__Oldest EventLog__Open ' +
+        'EventLog__OpenBackup EventLog__Read EventLog__RegisterSource ' +
+        'EventLog__Report Excel_BookAttach Excel_BookClose ' +
+        'Excel_BookList Excel_BookNew Excel_BookOpen ' +
+        'Excel_BookOpenText Excel_BookSave Excel_BookSaveAs ' +
+        'Excel_Close Excel_ColumnToLetter Excel_ColumnToNumber ' +
+        'Excel_ConvertFormula Excel_Export Excel_FilterGet ' +
+        'Excel_FilterSet Excel_Open Excel_PictureAdd Excel_Print ' +
+        'Excel_RangeCopyPaste Excel_RangeDelete Excel_RangeFind ' +
+        'Excel_RangeInsert Excel_RangeLinkAddRemove Excel_RangeRead ' +
+        'Excel_RangeReplace Excel_RangeSort Excel_RangeValidate ' +
+        'Excel_RangeWrite Excel_SheetAdd Excel_SheetCopyMove ' +
+        'Excel_SheetDelete Excel_SheetList FileCountLines FileCreate ' +
+        'FileListToArray FileListToArrayRec FilePrint ' +
+        'FileReadToArray FileWriteFromArray FileWriteLog ' +
+        'FileWriteToLine FTP_Close FTP_Command FTP_Connect ' +
+        'FTP_DecodeInternetStatus FTP_DirCreate FTP_DirDelete ' +
+        'FTP_DirGetCurrent FTP_DirPutContents FTP_DirSetCurrent ' +
+        'FTP_FileClose FTP_FileDelete FTP_FileGet FTP_FileGetSize ' +
+        'FTP_FileOpen FTP_FilePut FTP_FileRead FTP_FileRename ' +
+        'FTP_FileTimeLoHiToStr FTP_FindFileClose FTP_FindFileFirst ' +
+        'FTP_FindFileNext FTP_GetLastResponseInfo FTP_ListToArray ' +
+        'FTP_ListToArray2D FTP_ListToArrayEx FTP_Open ' +
+        'FTP_ProgressDownload FTP_ProgressUpload FTP_SetStatusCallback ' +
+        'GDIPlus_ArrowCapCreate GDIPlus_ArrowCapDispose ' +
+        'GDIPlus_ArrowCapGetFillState GDIPlus_ArrowCapGetHeight ' +
+        'GDIPlus_ArrowCapGetMiddleInset GDIPlus_ArrowCapGetWidth ' +
+        'GDIPlus_ArrowCapSetFillState GDIPlus_ArrowCapSetHeight ' +
+        'GDIPlus_ArrowCapSetMiddleInset GDIPlus_ArrowCapSetWidth ' +
+        'GDIPlus_BitmapApplyEffect GDIPlus_BitmapApplyEffectEx ' +
+        'GDIPlus_BitmapCloneArea GDIPlus_BitmapConvertFormat ' +
+        'GDIPlus_BitmapCreateApplyEffect ' +
+        'GDIPlus_BitmapCreateApplyEffectEx ' +
+        'GDIPlus_BitmapCreateDIBFromBitmap GDIPlus_BitmapCreateFromFile ' +
+        'GDIPlus_BitmapCreateFromGraphics ' +
+        'GDIPlus_BitmapCreateFromHBITMAP GDIPlus_BitmapCreateFromHICON ' +
+        'GDIPlus_BitmapCreateFromHICON32 GDIPlus_BitmapCreateFromMemory ' +
+        'GDIPlus_BitmapCreateFromResource GDIPlus_BitmapCreateFromScan0 ' +
+        'GDIPlus_BitmapCreateFromStream ' +
+        'GDIPlus_BitmapCreateHBITMAPFromBitmap GDIPlus_BitmapDispose ' +
+        'GDIPlus_BitmapGetHistogram GDIPlus_BitmapGetHistogramEx ' +
+        'GDIPlus_BitmapGetHistogramSize GDIPlus_BitmapGetPixel ' +
+        'GDIPlus_BitmapLockBits GDIPlus_BitmapSetPixel ' +
+        'GDIPlus_BitmapUnlockBits GDIPlus_BrushClone ' +
+        'GDIPlus_BrushCreateSolid GDIPlus_BrushDispose ' +
+        'GDIPlus_BrushGetSolidColor GDIPlus_BrushGetType ' +
+        'GDIPlus_BrushSetSolidColor GDIPlus_ColorMatrixCreate ' +
+        'GDIPlus_ColorMatrixCreateGrayScale ' +
+        'GDIPlus_ColorMatrixCreateNegative ' +
+        'GDIPlus_ColorMatrixCreateSaturation ' +
+        'GDIPlus_ColorMatrixCreateScale ' +
+        'GDIPlus_ColorMatrixCreateTranslate GDIPlus_CustomLineCapClone ' +
+        'GDIPlus_CustomLineCapCreate GDIPlus_CustomLineCapDispose ' +
+        'GDIPlus_CustomLineCapGetStrokeCaps ' +
+        'GDIPlus_CustomLineCapSetStrokeCaps GDIPlus_Decoders ' +
+        'GDIPlus_DecodersGetCount GDIPlus_DecodersGetSize ' +
+        'GDIPlus_DrawImageFX GDIPlus_DrawImageFXEx ' +
+        'GDIPlus_DrawImagePoints GDIPlus_EffectCreate ' +
+        'GDIPlus_EffectCreateBlur GDIPlus_EffectCreateBrightnessContrast ' +
+        'GDIPlus_EffectCreateColorBalance GDIPlus_EffectCreateColorCurve ' +
+        'GDIPlus_EffectCreateColorLUT GDIPlus_EffectCreateColorMatrix ' +
+        'GDIPlus_EffectCreateHueSaturationLightness ' +
+        'GDIPlus_EffectCreateLevels GDIPlus_EffectCreateRedEyeCorrection ' +
+        'GDIPlus_EffectCreateSharpen GDIPlus_EffectCreateTint ' +
+        'GDIPlus_EffectDispose GDIPlus_EffectGetParameters ' +
+        'GDIPlus_EffectSetParameters GDIPlus_Encoders ' +
+        'GDIPlus_EncodersGetCLSID GDIPlus_EncodersGetCount ' +
+        'GDIPlus_EncodersGetParamList GDIPlus_EncodersGetParamListSize ' +
+        'GDIPlus_EncodersGetSize GDIPlus_FontCreate ' +
+        'GDIPlus_FontDispose GDIPlus_FontFamilyCreate ' +
+        'GDIPlus_FontFamilyCreateFromCollection ' +
+        'GDIPlus_FontFamilyDispose GDIPlus_FontFamilyGetCellAscent ' +
+        'GDIPlus_FontFamilyGetCellDescent GDIPlus_FontFamilyGetEmHeight ' +
+        'GDIPlus_FontFamilyGetLineSpacing GDIPlus_FontGetHeight ' +
+        'GDIPlus_FontPrivateAddFont GDIPlus_FontPrivateAddMemoryFont ' +
+        'GDIPlus_FontPrivateCollectionDispose ' +
+        'GDIPlus_FontPrivateCreateCollection GDIPlus_GraphicsClear ' +
+        'GDIPlus_GraphicsCreateFromHDC GDIPlus_GraphicsCreateFromHWND ' +
+        'GDIPlus_GraphicsDispose GDIPlus_GraphicsDrawArc ' +
+        'GDIPlus_GraphicsDrawBezier GDIPlus_GraphicsDrawClosedCurve ' +
+        'GDIPlus_GraphicsDrawClosedCurve2 GDIPlus_GraphicsDrawCurve ' +
+        'GDIPlus_GraphicsDrawCurve2 GDIPlus_GraphicsDrawEllipse ' +
+        'GDIPlus_GraphicsDrawImage GDIPlus_GraphicsDrawImagePointsRect ' +
+        'GDIPlus_GraphicsDrawImageRect GDIPlus_GraphicsDrawImageRectRect ' +
+        'GDIPlus_GraphicsDrawLine GDIPlus_GraphicsDrawPath ' +
+        'GDIPlus_GraphicsDrawPie GDIPlus_GraphicsDrawPolygon ' +
+        'GDIPlus_GraphicsDrawRect GDIPlus_GraphicsDrawString ' +
+        'GDIPlus_GraphicsDrawStringEx GDIPlus_GraphicsFillClosedCurve ' +
+        'GDIPlus_GraphicsFillClosedCurve2 GDIPlus_GraphicsFillEllipse ' +
+        'GDIPlus_GraphicsFillPath GDIPlus_GraphicsFillPie ' +
+        'GDIPlus_GraphicsFillPolygon GDIPlus_GraphicsFillRect ' +
+        'GDIPlus_GraphicsFillRegion GDIPlus_GraphicsGetCompositingMode ' +
+        'GDIPlus_GraphicsGetCompositingQuality GDIPlus_GraphicsGetDC ' +
+        'GDIPlus_GraphicsGetInterpolationMode ' +
+        'GDIPlus_GraphicsGetSmoothingMode GDIPlus_GraphicsGetTransform ' +
+        'GDIPlus_GraphicsMeasureCharacterRanges ' +
+        'GDIPlus_GraphicsMeasureString GDIPlus_GraphicsReleaseDC ' +
+        'GDIPlus_GraphicsResetClip GDIPlus_GraphicsResetTransform ' +
+        'GDIPlus_GraphicsRestore GDIPlus_GraphicsRotateTransform ' +
+        'GDIPlus_GraphicsSave GDIPlus_GraphicsScaleTransform ' +
+        'GDIPlus_GraphicsSetClipPath GDIPlus_GraphicsSetClipRect ' +
+        'GDIPlus_GraphicsSetClipRegion ' +
+        'GDIPlus_GraphicsSetCompositingMode ' +
+        'GDIPlus_GraphicsSetCompositingQuality ' +
+        'GDIPlus_GraphicsSetInterpolationMode ' +
+        'GDIPlus_GraphicsSetPixelOffsetMode ' +
+        'GDIPlus_GraphicsSetSmoothingMode ' +
+        'GDIPlus_GraphicsSetTextRenderingHint ' +
+        'GDIPlus_GraphicsSetTransform GDIPlus_GraphicsTransformPoints ' +
+        'GDIPlus_GraphicsTranslateTransform GDIPlus_HatchBrushCreate ' +
+        'GDIPlus_HICONCreateFromBitmap GDIPlus_ImageAttributesCreate ' +
+        'GDIPlus_ImageAttributesDispose ' +
+        'GDIPlus_ImageAttributesSetColorKeys ' +
+        'GDIPlus_ImageAttributesSetColorMatrix GDIPlus_ImageDispose ' +
+        'GDIPlus_ImageGetDimension GDIPlus_ImageGetFlags ' +
+        'GDIPlus_ImageGetGraphicsContext GDIPlus_ImageGetHeight ' +
+        'GDIPlus_ImageGetHorizontalResolution ' +
+        'GDIPlus_ImageGetPixelFormat GDIPlus_ImageGetRawFormat ' +
+        'GDIPlus_ImageGetThumbnail GDIPlus_ImageGetType ' +
+        'GDIPlus_ImageGetVerticalResolution GDIPlus_ImageGetWidth ' +
+        'GDIPlus_ImageLoadFromFile GDIPlus_ImageLoadFromStream ' +
+        'GDIPlus_ImageResize GDIPlus_ImageRotateFlip ' +
+        'GDIPlus_ImageSaveToFile GDIPlus_ImageSaveToFileEx ' +
+        'GDIPlus_ImageSaveToStream GDIPlus_ImageScale ' +
+        'GDIPlus_LineBrushCreate GDIPlus_LineBrushCreateFromRect ' +
+        'GDIPlus_LineBrushCreateFromRectWithAngle ' +
+        'GDIPlus_LineBrushGetColors GDIPlus_LineBrushGetRect ' +
+        'GDIPlus_LineBrushMultiplyTransform ' +
+        'GDIPlus_LineBrushResetTransform GDIPlus_LineBrushSetBlend ' +
+        'GDIPlus_LineBrushSetColors GDIPlus_LineBrushSetGammaCorrection ' +
+        'GDIPlus_LineBrushSetLinearBlend GDIPlus_LineBrushSetPresetBlend ' +
+        'GDIPlus_LineBrushSetSigmaBlend GDIPlus_LineBrushSetTransform ' +
+        'GDIPlus_MatrixClone GDIPlus_MatrixCreate ' +
+        'GDIPlus_MatrixDispose GDIPlus_MatrixGetElements ' +
+        'GDIPlus_MatrixInvert GDIPlus_MatrixMultiply ' +
+        'GDIPlus_MatrixRotate GDIPlus_MatrixScale ' +
+        'GDIPlus_MatrixSetElements GDIPlus_MatrixShear ' +
+        'GDIPlus_MatrixTransformPoints GDIPlus_MatrixTranslate ' +
+        'GDIPlus_PaletteInitialize GDIPlus_ParamAdd GDIPlus_ParamInit ' +
+        'GDIPlus_ParamSize GDIPlus_PathAddArc GDIPlus_PathAddBezier ' +
+        'GDIPlus_PathAddClosedCurve GDIPlus_PathAddClosedCurve2 ' +
+        'GDIPlus_PathAddCurve GDIPlus_PathAddCurve2 ' +
+        'GDIPlus_PathAddCurve3 GDIPlus_PathAddEllipse ' +
+        'GDIPlus_PathAddLine GDIPlus_PathAddLine2 GDIPlus_PathAddPath ' +
+        'GDIPlus_PathAddPie GDIPlus_PathAddPolygon ' +
+        'GDIPlus_PathAddRectangle GDIPlus_PathAddString ' +
+        'GDIPlus_PathBrushCreate GDIPlus_PathBrushCreateFromPath ' +
+        'GDIPlus_PathBrushGetCenterPoint GDIPlus_PathBrushGetFocusScales ' +
+        'GDIPlus_PathBrushGetPointCount GDIPlus_PathBrushGetRect ' +
+        'GDIPlus_PathBrushGetWrapMode GDIPlus_PathBrushMultiplyTransform ' +
+        'GDIPlus_PathBrushResetTransform GDIPlus_PathBrushSetBlend ' +
+        'GDIPlus_PathBrushSetCenterColor GDIPlus_PathBrushSetCenterPoint ' +
+        'GDIPlus_PathBrushSetFocusScales ' +
+        'GDIPlus_PathBrushSetGammaCorrection ' +
+        'GDIPlus_PathBrushSetLinearBlend GDIPlus_PathBrushSetPresetBlend ' +
+        'GDIPlus_PathBrushSetSigmaBlend ' +
+        'GDIPlus_PathBrushSetSurroundColor ' +
+        'GDIPlus_PathBrushSetSurroundColorsWithCount ' +
+        'GDIPlus_PathBrushSetTransform GDIPlus_PathBrushSetWrapMode ' +
+        'GDIPlus_PathClone GDIPlus_PathCloseFigure GDIPlus_PathCreate ' +
+        'GDIPlus_PathCreate2 GDIPlus_PathDispose GDIPlus_PathFlatten ' +
+        'GDIPlus_PathGetData GDIPlus_PathGetFillMode ' +
+        'GDIPlus_PathGetLastPoint GDIPlus_PathGetPointCount ' +
+        'GDIPlus_PathGetPoints GDIPlus_PathGetWorldBounds ' +
+        'GDIPlus_PathIsOutlineVisiblePoint GDIPlus_PathIsVisiblePoint ' +
+        'GDIPlus_PathIterCreate GDIPlus_PathIterDispose ' +
+        'GDIPlus_PathIterGetSubpathCount GDIPlus_PathIterNextMarkerPath ' +
+        'GDIPlus_PathIterNextSubpathPath GDIPlus_PathIterRewind ' +
+        'GDIPlus_PathReset GDIPlus_PathReverse GDIPlus_PathSetFillMode ' +
+        'GDIPlus_PathSetMarker GDIPlus_PathStartFigure ' +
+        'GDIPlus_PathTransform GDIPlus_PathWarp GDIPlus_PathWiden ' +
+        'GDIPlus_PathWindingModeOutline GDIPlus_PenCreate ' +
+        'GDIPlus_PenCreate2 GDIPlus_PenDispose GDIPlus_PenGetAlignment ' +
+        'GDIPlus_PenGetColor GDIPlus_PenGetCustomEndCap ' +
+        'GDIPlus_PenGetDashCap GDIPlus_PenGetDashStyle ' +
+        'GDIPlus_PenGetEndCap GDIPlus_PenGetMiterLimit ' +
+        'GDIPlus_PenGetWidth GDIPlus_PenSetAlignment ' +
+        'GDIPlus_PenSetColor GDIPlus_PenSetCustomEndCap ' +
+        'GDIPlus_PenSetDashCap GDIPlus_PenSetDashStyle ' +
+        'GDIPlus_PenSetEndCap GDIPlus_PenSetLineCap ' +
+        'GDIPlus_PenSetLineJoin GDIPlus_PenSetMiterLimit ' +
+        'GDIPlus_PenSetStartCap GDIPlus_PenSetWidth ' +
+        'GDIPlus_RectFCreate GDIPlus_RegionClone ' +
+        'GDIPlus_RegionCombinePath GDIPlus_RegionCombineRect ' +
+        'GDIPlus_RegionCombineRegion GDIPlus_RegionCreate ' +
+        'GDIPlus_RegionCreateFromPath GDIPlus_RegionCreateFromRect ' +
+        'GDIPlus_RegionDispose GDIPlus_RegionGetBounds ' +
+        'GDIPlus_RegionGetHRgn GDIPlus_RegionTransform ' +
+        'GDIPlus_RegionTranslate GDIPlus_Shutdown GDIPlus_Startup ' +
+        'GDIPlus_StringFormatCreate GDIPlus_StringFormatDispose ' +
+        'GDIPlus_StringFormatGetMeasurableCharacterRangeCount ' +
+        'GDIPlus_StringFormatSetAlign GDIPlus_StringFormatSetLineAlign ' +
+        'GDIPlus_StringFormatSetMeasurableCharacterRanges ' +
+        'GDIPlus_TextureCreate GDIPlus_TextureCreate2 ' +
+        'GDIPlus_TextureCreateIA GetIP GUICtrlAVI_Close ' +
+        'GUICtrlAVI_Create GUICtrlAVI_Destroy GUICtrlAVI_IsPlaying ' +
+        'GUICtrlAVI_Open GUICtrlAVI_OpenEx GUICtrlAVI_Play ' +
+        'GUICtrlAVI_Seek GUICtrlAVI_Show GUICtrlAVI_Stop ' +
+        'GUICtrlButton_Click GUICtrlButton_Create ' +
+        'GUICtrlButton_Destroy GUICtrlButton_Enable ' +
+        'GUICtrlButton_GetCheck GUICtrlButton_GetFocus ' +
+        'GUICtrlButton_GetIdealSize GUICtrlButton_GetImage ' +
+        'GUICtrlButton_GetImageList GUICtrlButton_GetNote ' +
+        'GUICtrlButton_GetNoteLength GUICtrlButton_GetSplitInfo ' +
+        'GUICtrlButton_GetState GUICtrlButton_GetText ' +
+        'GUICtrlButton_GetTextMargin GUICtrlButton_SetCheck ' +
+        'GUICtrlButton_SetDontClick GUICtrlButton_SetFocus ' +
+        'GUICtrlButton_SetImage GUICtrlButton_SetImageList ' +
+        'GUICtrlButton_SetNote GUICtrlButton_SetShield ' +
+        'GUICtrlButton_SetSize GUICtrlButton_SetSplitInfo ' +
+        'GUICtrlButton_SetState GUICtrlButton_SetStyle ' +
+        'GUICtrlButton_SetText GUICtrlButton_SetTextMargin ' +
+        'GUICtrlButton_Show GUICtrlComboBoxEx_AddDir ' +
+        'GUICtrlComboBoxEx_AddString GUICtrlComboBoxEx_BeginUpdate ' +
+        'GUICtrlComboBoxEx_Create GUICtrlComboBoxEx_CreateSolidBitMap ' +
+        'GUICtrlComboBoxEx_DeleteString GUICtrlComboBoxEx_Destroy ' +
+        'GUICtrlComboBoxEx_EndUpdate GUICtrlComboBoxEx_FindStringExact ' +
+        'GUICtrlComboBoxEx_GetComboBoxInfo ' +
+        'GUICtrlComboBoxEx_GetComboControl GUICtrlComboBoxEx_GetCount ' +
+        'GUICtrlComboBoxEx_GetCurSel ' +
+        'GUICtrlComboBoxEx_GetDroppedControlRect ' +
+        'GUICtrlComboBoxEx_GetDroppedControlRectEx ' +
+        'GUICtrlComboBoxEx_GetDroppedState ' +
+        'GUICtrlComboBoxEx_GetDroppedWidth ' +
+        'GUICtrlComboBoxEx_GetEditControl GUICtrlComboBoxEx_GetEditSel ' +
+        'GUICtrlComboBoxEx_GetEditText ' +
+        'GUICtrlComboBoxEx_GetExtendedStyle ' +
+        'GUICtrlComboBoxEx_GetExtendedUI GUICtrlComboBoxEx_GetImageList ' +
+        'GUICtrlComboBoxEx_GetItem GUICtrlComboBoxEx_GetItemEx ' +
+        'GUICtrlComboBoxEx_GetItemHeight GUICtrlComboBoxEx_GetItemImage ' +
+        'GUICtrlComboBoxEx_GetItemIndent ' +
+        'GUICtrlComboBoxEx_GetItemOverlayImage ' +
+        'GUICtrlComboBoxEx_GetItemParam ' +
+        'GUICtrlComboBoxEx_GetItemSelectedImage ' +
+        'GUICtrlComboBoxEx_GetItemText GUICtrlComboBoxEx_GetItemTextLen ' +
+        'GUICtrlComboBoxEx_GetList GUICtrlComboBoxEx_GetListArray ' +
+        'GUICtrlComboBoxEx_GetLocale GUICtrlComboBoxEx_GetLocaleCountry ' +
+        'GUICtrlComboBoxEx_GetLocaleLang ' +
+        'GUICtrlComboBoxEx_GetLocalePrimLang ' +
+        'GUICtrlComboBoxEx_GetLocaleSubLang ' +
+        'GUICtrlComboBoxEx_GetMinVisible GUICtrlComboBoxEx_GetTopIndex ' +
+        'GUICtrlComboBoxEx_GetUnicode GUICtrlComboBoxEx_InitStorage ' +
+        'GUICtrlComboBoxEx_InsertString GUICtrlComboBoxEx_LimitText ' +
+        'GUICtrlComboBoxEx_ReplaceEditSel GUICtrlComboBoxEx_ResetContent ' +
+        'GUICtrlComboBoxEx_SetCurSel GUICtrlComboBoxEx_SetDroppedWidth ' +
+        'GUICtrlComboBoxEx_SetEditSel GUICtrlComboBoxEx_SetEditText ' +
+        'GUICtrlComboBoxEx_SetExtendedStyle ' +
+        'GUICtrlComboBoxEx_SetExtendedUI GUICtrlComboBoxEx_SetImageList ' +
+        'GUICtrlComboBoxEx_SetItem GUICtrlComboBoxEx_SetItemEx ' +
+        'GUICtrlComboBoxEx_SetItemHeight GUICtrlComboBoxEx_SetItemImage ' +
+        'GUICtrlComboBoxEx_SetItemIndent ' +
+        'GUICtrlComboBoxEx_SetItemOverlayImage ' +
+        'GUICtrlComboBoxEx_SetItemParam ' +
+        'GUICtrlComboBoxEx_SetItemSelectedImage ' +
+        'GUICtrlComboBoxEx_SetMinVisible GUICtrlComboBoxEx_SetTopIndex ' +
+        'GUICtrlComboBoxEx_SetUnicode GUICtrlComboBoxEx_ShowDropDown ' +
+        'GUICtrlComboBox_AddDir GUICtrlComboBox_AddString ' +
+        'GUICtrlComboBox_AutoComplete GUICtrlComboBox_BeginUpdate ' +
+        'GUICtrlComboBox_Create GUICtrlComboBox_DeleteString ' +
+        'GUICtrlComboBox_Destroy GUICtrlComboBox_EndUpdate ' +
+        'GUICtrlComboBox_FindString GUICtrlComboBox_FindStringExact ' +
+        'GUICtrlComboBox_GetComboBoxInfo GUICtrlComboBox_GetCount ' +
+        'GUICtrlComboBox_GetCueBanner GUICtrlComboBox_GetCurSel ' +
+        'GUICtrlComboBox_GetDroppedControlRect ' +
+        'GUICtrlComboBox_GetDroppedControlRectEx ' +
+        'GUICtrlComboBox_GetDroppedState GUICtrlComboBox_GetDroppedWidth ' +
+        'GUICtrlComboBox_GetEditSel GUICtrlComboBox_GetEditText ' +
+        'GUICtrlComboBox_GetExtendedUI ' +
+        'GUICtrlComboBox_GetHorizontalExtent ' +
+        'GUICtrlComboBox_GetItemHeight GUICtrlComboBox_GetLBText ' +
+        'GUICtrlComboBox_GetLBTextLen GUICtrlComboBox_GetList ' +
+        'GUICtrlComboBox_GetListArray GUICtrlComboBox_GetLocale ' +
+        'GUICtrlComboBox_GetLocaleCountry GUICtrlComboBox_GetLocaleLang ' +
+        'GUICtrlComboBox_GetLocalePrimLang ' +
+        'GUICtrlComboBox_GetLocaleSubLang GUICtrlComboBox_GetMinVisible ' +
+        'GUICtrlComboBox_GetTopIndex GUICtrlComboBox_InitStorage ' +
+        'GUICtrlComboBox_InsertString GUICtrlComboBox_LimitText ' +
+        'GUICtrlComboBox_ReplaceEditSel GUICtrlComboBox_ResetContent ' +
+        'GUICtrlComboBox_SelectString GUICtrlComboBox_SetCueBanner ' +
+        'GUICtrlComboBox_SetCurSel GUICtrlComboBox_SetDroppedWidth ' +
+        'GUICtrlComboBox_SetEditSel GUICtrlComboBox_SetEditText ' +
+        'GUICtrlComboBox_SetExtendedUI ' +
+        'GUICtrlComboBox_SetHorizontalExtent ' +
+        'GUICtrlComboBox_SetItemHeight GUICtrlComboBox_SetMinVisible ' +
+        'GUICtrlComboBox_SetTopIndex GUICtrlComboBox_ShowDropDown ' +
+        'GUICtrlDTP_Create GUICtrlDTP_Destroy GUICtrlDTP_GetMCColor ' +
+        'GUICtrlDTP_GetMCFont GUICtrlDTP_GetMonthCal ' +
+        'GUICtrlDTP_GetRange GUICtrlDTP_GetRangeEx ' +
+        'GUICtrlDTP_GetSystemTime GUICtrlDTP_GetSystemTimeEx ' +
+        'GUICtrlDTP_SetFormat GUICtrlDTP_SetMCColor ' +
+        'GUICtrlDTP_SetMCFont GUICtrlDTP_SetRange ' +
+        'GUICtrlDTP_SetRangeEx GUICtrlDTP_SetSystemTime ' +
+        'GUICtrlDTP_SetSystemTimeEx GUICtrlEdit_AppendText ' +
+        'GUICtrlEdit_BeginUpdate GUICtrlEdit_CanUndo ' +
+        'GUICtrlEdit_CharFromPos GUICtrlEdit_Create ' +
+        'GUICtrlEdit_Destroy GUICtrlEdit_EmptyUndoBuffer ' +
+        'GUICtrlEdit_EndUpdate GUICtrlEdit_Find GUICtrlEdit_FmtLines ' +
+        'GUICtrlEdit_GetCueBanner GUICtrlEdit_GetFirstVisibleLine ' +
+        'GUICtrlEdit_GetLimitText GUICtrlEdit_GetLine ' +
+        'GUICtrlEdit_GetLineCount GUICtrlEdit_GetMargins ' +
+        'GUICtrlEdit_GetModify GUICtrlEdit_GetPasswordChar ' +
+        'GUICtrlEdit_GetRECT GUICtrlEdit_GetRECTEx GUICtrlEdit_GetSel ' +
+        'GUICtrlEdit_GetText GUICtrlEdit_GetTextLen ' +
+        'GUICtrlEdit_HideBalloonTip GUICtrlEdit_InsertText ' +
+        'GUICtrlEdit_LineFromChar GUICtrlEdit_LineIndex ' +
+        'GUICtrlEdit_LineLength GUICtrlEdit_LineScroll ' +
+        'GUICtrlEdit_PosFromChar GUICtrlEdit_ReplaceSel ' +
+        'GUICtrlEdit_Scroll GUICtrlEdit_SetCueBanner ' +
+        'GUICtrlEdit_SetLimitText GUICtrlEdit_SetMargins ' +
+        'GUICtrlEdit_SetModify GUICtrlEdit_SetPasswordChar ' +
+        'GUICtrlEdit_SetReadOnly GUICtrlEdit_SetRECT ' +
+        'GUICtrlEdit_SetRECTEx GUICtrlEdit_SetRECTNP ' +
+        'GUICtrlEdit_SetRectNPEx GUICtrlEdit_SetSel ' +
+        'GUICtrlEdit_SetTabStops GUICtrlEdit_SetText ' +
+        'GUICtrlEdit_ShowBalloonTip GUICtrlEdit_Undo ' +
+        'GUICtrlHeader_AddItem GUICtrlHeader_ClearFilter ' +
+        'GUICtrlHeader_ClearFilterAll GUICtrlHeader_Create ' +
+        'GUICtrlHeader_CreateDragImage GUICtrlHeader_DeleteItem ' +
+        'GUICtrlHeader_Destroy GUICtrlHeader_EditFilter ' +
+        'GUICtrlHeader_GetBitmapMargin GUICtrlHeader_GetImageList ' +
+        'GUICtrlHeader_GetItem GUICtrlHeader_GetItemAlign ' +
+        'GUICtrlHeader_GetItemBitmap GUICtrlHeader_GetItemCount ' +
+        'GUICtrlHeader_GetItemDisplay GUICtrlHeader_GetItemFlags ' +
+        'GUICtrlHeader_GetItemFormat GUICtrlHeader_GetItemImage ' +
+        'GUICtrlHeader_GetItemOrder GUICtrlHeader_GetItemParam ' +
+        'GUICtrlHeader_GetItemRect GUICtrlHeader_GetItemRectEx ' +
+        'GUICtrlHeader_GetItemText GUICtrlHeader_GetItemWidth ' +
+        'GUICtrlHeader_GetOrderArray GUICtrlHeader_GetUnicodeFormat ' +
+        'GUICtrlHeader_HitTest GUICtrlHeader_InsertItem ' +
+        'GUICtrlHeader_Layout GUICtrlHeader_OrderToIndex ' +
+        'GUICtrlHeader_SetBitmapMargin ' +
+        'GUICtrlHeader_SetFilterChangeTimeout ' +
+        'GUICtrlHeader_SetHotDivider GUICtrlHeader_SetImageList ' +
+        'GUICtrlHeader_SetItem GUICtrlHeader_SetItemAlign ' +
+        'GUICtrlHeader_SetItemBitmap GUICtrlHeader_SetItemDisplay ' +
+        'GUICtrlHeader_SetItemFlags GUICtrlHeader_SetItemFormat ' +
+        'GUICtrlHeader_SetItemImage GUICtrlHeader_SetItemOrder ' +
+        'GUICtrlHeader_SetItemParam GUICtrlHeader_SetItemText ' +
+        'GUICtrlHeader_SetItemWidth GUICtrlHeader_SetOrderArray ' +
+        'GUICtrlHeader_SetUnicodeFormat GUICtrlIpAddress_ClearAddress ' +
+        'GUICtrlIpAddress_Create GUICtrlIpAddress_Destroy ' +
+        'GUICtrlIpAddress_Get GUICtrlIpAddress_GetArray ' +
+        'GUICtrlIpAddress_GetEx GUICtrlIpAddress_IsBlank ' +
+        'GUICtrlIpAddress_Set GUICtrlIpAddress_SetArray ' +
+        'GUICtrlIpAddress_SetEx GUICtrlIpAddress_SetFocus ' +
+        'GUICtrlIpAddress_SetFont GUICtrlIpAddress_SetRange ' +
+        'GUICtrlIpAddress_ShowHide GUICtrlListBox_AddFile ' +
+        'GUICtrlListBox_AddString GUICtrlListBox_BeginUpdate ' +
+        'GUICtrlListBox_ClickItem GUICtrlListBox_Create ' +
+        'GUICtrlListBox_DeleteString GUICtrlListBox_Destroy ' +
+        'GUICtrlListBox_Dir GUICtrlListBox_EndUpdate ' +
+        'GUICtrlListBox_FindInText GUICtrlListBox_FindString ' +
+        'GUICtrlListBox_GetAnchorIndex GUICtrlListBox_GetCaretIndex ' +
+        'GUICtrlListBox_GetCount GUICtrlListBox_GetCurSel ' +
+        'GUICtrlListBox_GetHorizontalExtent GUICtrlListBox_GetItemData ' +
+        'GUICtrlListBox_GetItemHeight GUICtrlListBox_GetItemRect ' +
+        'GUICtrlListBox_GetItemRectEx GUICtrlListBox_GetListBoxInfo ' +
+        'GUICtrlListBox_GetLocale GUICtrlListBox_GetLocaleCountry ' +
+        'GUICtrlListBox_GetLocaleLang GUICtrlListBox_GetLocalePrimLang ' +
+        'GUICtrlListBox_GetLocaleSubLang GUICtrlListBox_GetSel ' +
+        'GUICtrlListBox_GetSelCount GUICtrlListBox_GetSelItems ' +
+        'GUICtrlListBox_GetSelItemsText GUICtrlListBox_GetText ' +
+        'GUICtrlListBox_GetTextLen GUICtrlListBox_GetTopIndex ' +
+        'GUICtrlListBox_InitStorage GUICtrlListBox_InsertString ' +
+        'GUICtrlListBox_ItemFromPoint GUICtrlListBox_ReplaceString ' +
+        'GUICtrlListBox_ResetContent GUICtrlListBox_SelectString ' +
+        'GUICtrlListBox_SelItemRange GUICtrlListBox_SelItemRangeEx ' +
+        'GUICtrlListBox_SetAnchorIndex GUICtrlListBox_SetCaretIndex ' +
+        'GUICtrlListBox_SetColumnWidth GUICtrlListBox_SetCurSel ' +
+        'GUICtrlListBox_SetHorizontalExtent GUICtrlListBox_SetItemData ' +
+        'GUICtrlListBox_SetItemHeight GUICtrlListBox_SetLocale ' +
+        'GUICtrlListBox_SetSel GUICtrlListBox_SetTabStops ' +
+        'GUICtrlListBox_SetTopIndex GUICtrlListBox_Sort ' +
+        'GUICtrlListBox_SwapString GUICtrlListBox_UpdateHScroll ' +
+        'GUICtrlListView_AddArray GUICtrlListView_AddColumn ' +
+        'GUICtrlListView_AddItem GUICtrlListView_AddSubItem ' +
+        'GUICtrlListView_ApproximateViewHeight ' +
+        'GUICtrlListView_ApproximateViewRect ' +
+        'GUICtrlListView_ApproximateViewWidth GUICtrlListView_Arrange ' +
+        'GUICtrlListView_BeginUpdate GUICtrlListView_CancelEditLabel ' +
+        'GUICtrlListView_ClickItem GUICtrlListView_CopyItems ' +
+        'GUICtrlListView_Create GUICtrlListView_CreateDragImage ' +
+        'GUICtrlListView_CreateSolidBitMap ' +
+        'GUICtrlListView_DeleteAllItems GUICtrlListView_DeleteColumn ' +
+        'GUICtrlListView_DeleteItem GUICtrlListView_DeleteItemsSelected ' +
+        'GUICtrlListView_Destroy GUICtrlListView_DrawDragImage ' +
+        'GUICtrlListView_EditLabel GUICtrlListView_EnableGroupView ' +
+        'GUICtrlListView_EndUpdate GUICtrlListView_EnsureVisible ' +
+        'GUICtrlListView_FindInText GUICtrlListView_FindItem ' +
+        'GUICtrlListView_FindNearest GUICtrlListView_FindParam ' +
+        'GUICtrlListView_FindText GUICtrlListView_GetBkColor ' +
+        'GUICtrlListView_GetBkImage GUICtrlListView_GetCallbackMask ' +
+        'GUICtrlListView_GetColumn GUICtrlListView_GetColumnCount ' +
+        'GUICtrlListView_GetColumnOrder ' +
+        'GUICtrlListView_GetColumnOrderArray ' +
+        'GUICtrlListView_GetColumnWidth GUICtrlListView_GetCounterPage ' +
+        'GUICtrlListView_GetEditControl ' +
+        'GUICtrlListView_GetExtendedListViewStyle ' +
+        'GUICtrlListView_GetFocusedGroup GUICtrlListView_GetGroupCount ' +
+        'GUICtrlListView_GetGroupInfo ' +
+        'GUICtrlListView_GetGroupInfoByIndex ' +
+        'GUICtrlListView_GetGroupRect ' +
+        'GUICtrlListView_GetGroupViewEnabled GUICtrlListView_GetHeader ' +
+        'GUICtrlListView_GetHotCursor GUICtrlListView_GetHotItem ' +
+        'GUICtrlListView_GetHoverTime GUICtrlListView_GetImageList ' +
+        'GUICtrlListView_GetISearchString GUICtrlListView_GetItem ' +
+        'GUICtrlListView_GetItemChecked GUICtrlListView_GetItemCount ' +
+        'GUICtrlListView_GetItemCut GUICtrlListView_GetItemDropHilited ' +
+        'GUICtrlListView_GetItemEx GUICtrlListView_GetItemFocused ' +
+        'GUICtrlListView_GetItemGroupID GUICtrlListView_GetItemImage ' +
+        'GUICtrlListView_GetItemIndent GUICtrlListView_GetItemParam ' +
+        'GUICtrlListView_GetItemPosition ' +
+        'GUICtrlListView_GetItemPositionX ' +
+        'GUICtrlListView_GetItemPositionY GUICtrlListView_GetItemRect ' +
+        'GUICtrlListView_GetItemRectEx GUICtrlListView_GetItemSelected ' +
+        'GUICtrlListView_GetItemSpacing GUICtrlListView_GetItemSpacingX ' +
+        'GUICtrlListView_GetItemSpacingY GUICtrlListView_GetItemState ' +
+        'GUICtrlListView_GetItemStateImage GUICtrlListView_GetItemText ' +
+        'GUICtrlListView_GetItemTextArray ' +
+        'GUICtrlListView_GetItemTextString GUICtrlListView_GetNextItem ' +
+        'GUICtrlListView_GetNumberOfWorkAreas GUICtrlListView_GetOrigin ' +
+        'GUICtrlListView_GetOriginX GUICtrlListView_GetOriginY ' +
+        'GUICtrlListView_GetOutlineColor ' +
+        'GUICtrlListView_GetSelectedColumn ' +
+        'GUICtrlListView_GetSelectedCount ' +
+        'GUICtrlListView_GetSelectedIndices ' +
+        'GUICtrlListView_GetSelectionMark GUICtrlListView_GetStringWidth ' +
+        'GUICtrlListView_GetSubItemRect GUICtrlListView_GetTextBkColor ' +
+        'GUICtrlListView_GetTextColor GUICtrlListView_GetToolTips ' +
+        'GUICtrlListView_GetTopIndex GUICtrlListView_GetUnicodeFormat ' +
+        'GUICtrlListView_GetView GUICtrlListView_GetViewDetails ' +
+        'GUICtrlListView_GetViewLarge GUICtrlListView_GetViewList ' +
+        'GUICtrlListView_GetViewRect GUICtrlListView_GetViewSmall ' +
+        'GUICtrlListView_GetViewTile GUICtrlListView_HideColumn ' +
+        'GUICtrlListView_HitTest GUICtrlListView_InsertColumn ' +
+        'GUICtrlListView_InsertGroup GUICtrlListView_InsertItem ' +
+        'GUICtrlListView_JustifyColumn GUICtrlListView_MapIDToIndex ' +
+        'GUICtrlListView_MapIndexToID GUICtrlListView_RedrawItems ' +
+        'GUICtrlListView_RegisterSortCallBack ' +
+        'GUICtrlListView_RemoveAllGroups GUICtrlListView_RemoveGroup ' +
+        'GUICtrlListView_Scroll GUICtrlListView_SetBkColor ' +
+        'GUICtrlListView_SetBkImage GUICtrlListView_SetCallBackMask ' +
+        'GUICtrlListView_SetColumn GUICtrlListView_SetColumnOrder ' +
+        'GUICtrlListView_SetColumnOrderArray ' +
+        'GUICtrlListView_SetColumnWidth ' +
+        'GUICtrlListView_SetExtendedListViewStyle ' +
+        'GUICtrlListView_SetGroupInfo GUICtrlListView_SetHotItem ' +
+        'GUICtrlListView_SetHoverTime GUICtrlListView_SetIconSpacing ' +
+        'GUICtrlListView_SetImageList GUICtrlListView_SetItem ' +
+        'GUICtrlListView_SetItemChecked GUICtrlListView_SetItemCount ' +
+        'GUICtrlListView_SetItemCut GUICtrlListView_SetItemDropHilited ' +
+        'GUICtrlListView_SetItemEx GUICtrlListView_SetItemFocused ' +
+        'GUICtrlListView_SetItemGroupID GUICtrlListView_SetItemImage ' +
+        'GUICtrlListView_SetItemIndent GUICtrlListView_SetItemParam ' +
+        'GUICtrlListView_SetItemPosition ' +
+        'GUICtrlListView_SetItemPosition32 ' +
+        'GUICtrlListView_SetItemSelected GUICtrlListView_SetItemState ' +
+        'GUICtrlListView_SetItemStateImage GUICtrlListView_SetItemText ' +
+        'GUICtrlListView_SetOutlineColor ' +
+        'GUICtrlListView_SetSelectedColumn ' +
+        'GUICtrlListView_SetSelectionMark GUICtrlListView_SetTextBkColor ' +
+        'GUICtrlListView_SetTextColor GUICtrlListView_SetToolTips ' +
+        'GUICtrlListView_SetUnicodeFormat GUICtrlListView_SetView ' +
+        'GUICtrlListView_SetWorkAreas GUICtrlListView_SimpleSort ' +
+        'GUICtrlListView_SortItems GUICtrlListView_SubItemHitTest ' +
+        'GUICtrlListView_UnRegisterSortCallBack GUICtrlMenu_AddMenuItem ' +
+        'GUICtrlMenu_AppendMenu GUICtrlMenu_CalculatePopupWindowPosition ' +
+        'GUICtrlMenu_CheckMenuItem GUICtrlMenu_CheckRadioItem ' +
+        'GUICtrlMenu_CreateMenu GUICtrlMenu_CreatePopup ' +
+        'GUICtrlMenu_DeleteMenu GUICtrlMenu_DestroyMenu ' +
+        'GUICtrlMenu_DrawMenuBar GUICtrlMenu_EnableMenuItem ' +
+        'GUICtrlMenu_FindItem GUICtrlMenu_FindParent ' +
+        'GUICtrlMenu_GetItemBmp GUICtrlMenu_GetItemBmpChecked ' +
+        'GUICtrlMenu_GetItemBmpUnchecked GUICtrlMenu_GetItemChecked ' +
+        'GUICtrlMenu_GetItemCount GUICtrlMenu_GetItemData ' +
+        'GUICtrlMenu_GetItemDefault GUICtrlMenu_GetItemDisabled ' +
+        'GUICtrlMenu_GetItemEnabled GUICtrlMenu_GetItemGrayed ' +
+        'GUICtrlMenu_GetItemHighlighted GUICtrlMenu_GetItemID ' +
+        'GUICtrlMenu_GetItemInfo GUICtrlMenu_GetItemRect ' +
+        'GUICtrlMenu_GetItemRectEx GUICtrlMenu_GetItemState ' +
+        'GUICtrlMenu_GetItemStateEx GUICtrlMenu_GetItemSubMenu ' +
+        'GUICtrlMenu_GetItemText GUICtrlMenu_GetItemType ' +
+        'GUICtrlMenu_GetMenu GUICtrlMenu_GetMenuBackground ' +
+        'GUICtrlMenu_GetMenuBarInfo GUICtrlMenu_GetMenuContextHelpID ' +
+        'GUICtrlMenu_GetMenuData GUICtrlMenu_GetMenuDefaultItem ' +
+        'GUICtrlMenu_GetMenuHeight GUICtrlMenu_GetMenuInfo ' +
+        'GUICtrlMenu_GetMenuStyle GUICtrlMenu_GetSystemMenu ' +
+        'GUICtrlMenu_InsertMenuItem GUICtrlMenu_InsertMenuItemEx ' +
+        'GUICtrlMenu_IsMenu GUICtrlMenu_LoadMenu ' +
+        'GUICtrlMenu_MapAccelerator GUICtrlMenu_MenuItemFromPoint ' +
+        'GUICtrlMenu_RemoveMenu GUICtrlMenu_SetItemBitmaps ' +
+        'GUICtrlMenu_SetItemBmp GUICtrlMenu_SetItemBmpChecked ' +
+        'GUICtrlMenu_SetItemBmpUnchecked GUICtrlMenu_SetItemChecked ' +
+        'GUICtrlMenu_SetItemData GUICtrlMenu_SetItemDefault ' +
+        'GUICtrlMenu_SetItemDisabled GUICtrlMenu_SetItemEnabled ' +
+        'GUICtrlMenu_SetItemGrayed GUICtrlMenu_SetItemHighlighted ' +
+        'GUICtrlMenu_SetItemID GUICtrlMenu_SetItemInfo ' +
+        'GUICtrlMenu_SetItemState GUICtrlMenu_SetItemSubMenu ' +
+        'GUICtrlMenu_SetItemText GUICtrlMenu_SetItemType ' +
+        'GUICtrlMenu_SetMenu GUICtrlMenu_SetMenuBackground ' +
+        'GUICtrlMenu_SetMenuContextHelpID GUICtrlMenu_SetMenuData ' +
+        'GUICtrlMenu_SetMenuDefaultItem GUICtrlMenu_SetMenuHeight ' +
+        'GUICtrlMenu_SetMenuInfo GUICtrlMenu_SetMenuStyle ' +
+        'GUICtrlMenu_TrackPopupMenu GUICtrlMonthCal_Create ' +
+        'GUICtrlMonthCal_Destroy GUICtrlMonthCal_GetCalendarBorder ' +
+        'GUICtrlMonthCal_GetCalendarCount GUICtrlMonthCal_GetColor ' +
+        'GUICtrlMonthCal_GetColorArray GUICtrlMonthCal_GetCurSel ' +
+        'GUICtrlMonthCal_GetCurSelStr GUICtrlMonthCal_GetFirstDOW ' +
+        'GUICtrlMonthCal_GetFirstDOWStr GUICtrlMonthCal_GetMaxSelCount ' +
+        'GUICtrlMonthCal_GetMaxTodayWidth ' +
+        'GUICtrlMonthCal_GetMinReqHeight GUICtrlMonthCal_GetMinReqRect ' +
+        'GUICtrlMonthCal_GetMinReqRectArray ' +
+        'GUICtrlMonthCal_GetMinReqWidth GUICtrlMonthCal_GetMonthDelta ' +
+        'GUICtrlMonthCal_GetMonthRange GUICtrlMonthCal_GetMonthRangeMax ' +
+        'GUICtrlMonthCal_GetMonthRangeMaxStr ' +
+        'GUICtrlMonthCal_GetMonthRangeMin ' +
+        'GUICtrlMonthCal_GetMonthRangeMinStr ' +
+        'GUICtrlMonthCal_GetMonthRangeSpan GUICtrlMonthCal_GetRange ' +
+        'GUICtrlMonthCal_GetRangeMax GUICtrlMonthCal_GetRangeMaxStr ' +
+        'GUICtrlMonthCal_GetRangeMin GUICtrlMonthCal_GetRangeMinStr ' +
+        'GUICtrlMonthCal_GetSelRange GUICtrlMonthCal_GetSelRangeMax ' +
+        'GUICtrlMonthCal_GetSelRangeMaxStr ' +
+        'GUICtrlMonthCal_GetSelRangeMin ' +
+        'GUICtrlMonthCal_GetSelRangeMinStr GUICtrlMonthCal_GetToday ' +
+        'GUICtrlMonthCal_GetTodayStr GUICtrlMonthCal_GetUnicodeFormat ' +
+        'GUICtrlMonthCal_HitTest GUICtrlMonthCal_SetCalendarBorder ' +
+        'GUICtrlMonthCal_SetColor GUICtrlMonthCal_SetCurSel ' +
+        'GUICtrlMonthCal_SetDayState GUICtrlMonthCal_SetFirstDOW ' +
+        'GUICtrlMonthCal_SetMaxSelCount GUICtrlMonthCal_SetMonthDelta ' +
+        'GUICtrlMonthCal_SetRange GUICtrlMonthCal_SetSelRange ' +
+        'GUICtrlMonthCal_SetToday GUICtrlMonthCal_SetUnicodeFormat ' +
+        'GUICtrlRebar_AddBand GUICtrlRebar_AddToolBarBand ' +
+        'GUICtrlRebar_BeginDrag GUICtrlRebar_Create ' +
+        'GUICtrlRebar_DeleteBand GUICtrlRebar_Destroy ' +
+        'GUICtrlRebar_DragMove GUICtrlRebar_EndDrag ' +
+        'GUICtrlRebar_GetBandBackColor GUICtrlRebar_GetBandBorders ' +
+        'GUICtrlRebar_GetBandBordersEx GUICtrlRebar_GetBandChildHandle ' +
+        'GUICtrlRebar_GetBandChildSize GUICtrlRebar_GetBandCount ' +
+        'GUICtrlRebar_GetBandForeColor GUICtrlRebar_GetBandHeaderSize ' +
+        'GUICtrlRebar_GetBandID GUICtrlRebar_GetBandIdealSize ' +
+        'GUICtrlRebar_GetBandLength GUICtrlRebar_GetBandLParam ' +
+        'GUICtrlRebar_GetBandMargins GUICtrlRebar_GetBandMarginsEx ' +
+        'GUICtrlRebar_GetBandRect GUICtrlRebar_GetBandRectEx ' +
+        'GUICtrlRebar_GetBandStyle GUICtrlRebar_GetBandStyleBreak ' +
+        'GUICtrlRebar_GetBandStyleChildEdge ' +
+        'GUICtrlRebar_GetBandStyleFixedBMP ' +
+        'GUICtrlRebar_GetBandStyleFixedSize ' +
+        'GUICtrlRebar_GetBandStyleGripperAlways ' +
+        'GUICtrlRebar_GetBandStyleHidden ' +
+        'GUICtrlRebar_GetBandStyleHideTitle ' +
+        'GUICtrlRebar_GetBandStyleNoGripper ' +
+        'GUICtrlRebar_GetBandStyleTopAlign ' +
+        'GUICtrlRebar_GetBandStyleUseChevron ' +
+        'GUICtrlRebar_GetBandStyleVariableHeight ' +
+        'GUICtrlRebar_GetBandText GUICtrlRebar_GetBarHeight ' +
+        'GUICtrlRebar_GetBarInfo GUICtrlRebar_GetBKColor ' +
+        'GUICtrlRebar_GetColorScheme GUICtrlRebar_GetRowCount ' +
+        'GUICtrlRebar_GetRowHeight GUICtrlRebar_GetTextColor ' +
+        'GUICtrlRebar_GetToolTips GUICtrlRebar_GetUnicodeFormat ' +
+        'GUICtrlRebar_HitTest GUICtrlRebar_IDToIndex ' +
+        'GUICtrlRebar_MaximizeBand GUICtrlRebar_MinimizeBand ' +
+        'GUICtrlRebar_MoveBand GUICtrlRebar_SetBandBackColor ' +
+        'GUICtrlRebar_SetBandForeColor GUICtrlRebar_SetBandHeaderSize ' +
+        'GUICtrlRebar_SetBandID GUICtrlRebar_SetBandIdealSize ' +
+        'GUICtrlRebar_SetBandLength GUICtrlRebar_SetBandLParam ' +
+        'GUICtrlRebar_SetBandStyle GUICtrlRebar_SetBandStyleBreak ' +
+        'GUICtrlRebar_SetBandStyleChildEdge ' +
+        'GUICtrlRebar_SetBandStyleFixedBMP ' +
+        'GUICtrlRebar_SetBandStyleFixedSize ' +
+        'GUICtrlRebar_SetBandStyleGripperAlways ' +
+        'GUICtrlRebar_SetBandStyleHidden ' +
+        'GUICtrlRebar_SetBandStyleHideTitle ' +
+        'GUICtrlRebar_SetBandStyleNoGripper ' +
+        'GUICtrlRebar_SetBandStyleTopAlign ' +
+        'GUICtrlRebar_SetBandStyleUseChevron ' +
+        'GUICtrlRebar_SetBandStyleVariableHeight ' +
+        'GUICtrlRebar_SetBandText GUICtrlRebar_SetBarInfo ' +
+        'GUICtrlRebar_SetBKColor GUICtrlRebar_SetColorScheme ' +
+        'GUICtrlRebar_SetTextColor GUICtrlRebar_SetToolTips ' +
+        'GUICtrlRebar_SetUnicodeFormat GUICtrlRebar_ShowBand ' +
+        'GUICtrlRichEdit_AppendText GUICtrlRichEdit_AutoDetectURL ' +
+        'GUICtrlRichEdit_CanPaste GUICtrlRichEdit_CanPasteSpecial ' +
+        'GUICtrlRichEdit_CanRedo GUICtrlRichEdit_CanUndo ' +
+        'GUICtrlRichEdit_ChangeFontSize GUICtrlRichEdit_Copy ' +
+        'GUICtrlRichEdit_Create GUICtrlRichEdit_Cut ' +
+        'GUICtrlRichEdit_Deselect GUICtrlRichEdit_Destroy ' +
+        'GUICtrlRichEdit_EmptyUndoBuffer GUICtrlRichEdit_FindText ' +
+        'GUICtrlRichEdit_FindTextInRange GUICtrlRichEdit_GetBkColor ' +
+        'GUICtrlRichEdit_GetCharAttributes ' +
+        'GUICtrlRichEdit_GetCharBkColor GUICtrlRichEdit_GetCharColor ' +
+        'GUICtrlRichEdit_GetCharPosFromXY ' +
+        'GUICtrlRichEdit_GetCharPosOfNextWord ' +
+        'GUICtrlRichEdit_GetCharPosOfPreviousWord ' +
+        'GUICtrlRichEdit_GetCharWordBreakInfo ' +
+        'GUICtrlRichEdit_GetFirstCharPosOnLine GUICtrlRichEdit_GetFont ' +
+        'GUICtrlRichEdit_GetLineCount GUICtrlRichEdit_GetLineLength ' +
+        'GUICtrlRichEdit_GetLineNumberFromCharPos ' +
+        'GUICtrlRichEdit_GetNextRedo GUICtrlRichEdit_GetNextUndo ' +
+        'GUICtrlRichEdit_GetNumberOfFirstVisibleLine ' +
+        'GUICtrlRichEdit_GetParaAlignment ' +
+        'GUICtrlRichEdit_GetParaAttributes GUICtrlRichEdit_GetParaBorder ' +
+        'GUICtrlRichEdit_GetParaIndents GUICtrlRichEdit_GetParaNumbering ' +
+        'GUICtrlRichEdit_GetParaShading GUICtrlRichEdit_GetParaSpacing ' +
+        'GUICtrlRichEdit_GetParaTabStops GUICtrlRichEdit_GetPasswordChar ' +
+        'GUICtrlRichEdit_GetRECT GUICtrlRichEdit_GetScrollPos ' +
+        'GUICtrlRichEdit_GetSel GUICtrlRichEdit_GetSelAA ' +
+        'GUICtrlRichEdit_GetSelText GUICtrlRichEdit_GetSpaceUnit ' +
+        'GUICtrlRichEdit_GetText GUICtrlRichEdit_GetTextInLine ' +
+        'GUICtrlRichEdit_GetTextInRange GUICtrlRichEdit_GetTextLength ' +
+        'GUICtrlRichEdit_GetVersion GUICtrlRichEdit_GetXYFromCharPos ' +
+        'GUICtrlRichEdit_GetZoom GUICtrlRichEdit_GotoCharPos ' +
+        'GUICtrlRichEdit_HideSelection GUICtrlRichEdit_InsertText ' +
+        'GUICtrlRichEdit_IsModified GUICtrlRichEdit_IsTextSelected ' +
+        'GUICtrlRichEdit_Paste GUICtrlRichEdit_PasteSpecial ' +
+        'GUICtrlRichEdit_PauseRedraw GUICtrlRichEdit_Redo ' +
+        'GUICtrlRichEdit_ReplaceText GUICtrlRichEdit_ResumeRedraw ' +
+        'GUICtrlRichEdit_ScrollLineOrPage GUICtrlRichEdit_ScrollLines ' +
+        'GUICtrlRichEdit_ScrollToCaret GUICtrlRichEdit_SetBkColor ' +
+        'GUICtrlRichEdit_SetCharAttributes ' +
+        'GUICtrlRichEdit_SetCharBkColor GUICtrlRichEdit_SetCharColor ' +
+        'GUICtrlRichEdit_SetEventMask GUICtrlRichEdit_SetFont ' +
+        'GUICtrlRichEdit_SetLimitOnText GUICtrlRichEdit_SetModified ' +
+        'GUICtrlRichEdit_SetParaAlignment ' +
+        'GUICtrlRichEdit_SetParaAttributes GUICtrlRichEdit_SetParaBorder ' +
+        'GUICtrlRichEdit_SetParaIndents GUICtrlRichEdit_SetParaNumbering ' +
+        'GUICtrlRichEdit_SetParaShading GUICtrlRichEdit_SetParaSpacing ' +
+        'GUICtrlRichEdit_SetParaTabStops GUICtrlRichEdit_SetPasswordChar ' +
+        'GUICtrlRichEdit_SetReadOnly GUICtrlRichEdit_SetRECT ' +
+        'GUICtrlRichEdit_SetScrollPos GUICtrlRichEdit_SetSel ' +
+        'GUICtrlRichEdit_SetSpaceUnit GUICtrlRichEdit_SetTabStops ' +
+        'GUICtrlRichEdit_SetText GUICtrlRichEdit_SetUndoLimit ' +
+        'GUICtrlRichEdit_SetZoom GUICtrlRichEdit_StreamFromFile ' +
+        'GUICtrlRichEdit_StreamFromVar GUICtrlRichEdit_StreamToFile ' +
+        'GUICtrlRichEdit_StreamToVar GUICtrlRichEdit_Undo ' +
+        'GUICtrlSlider_ClearSel GUICtrlSlider_ClearTics ' +
+        'GUICtrlSlider_Create GUICtrlSlider_Destroy ' +
+        'GUICtrlSlider_GetBuddy GUICtrlSlider_GetChannelRect ' +
+        'GUICtrlSlider_GetChannelRectEx GUICtrlSlider_GetLineSize ' +
+        'GUICtrlSlider_GetLogicalTics GUICtrlSlider_GetNumTics ' +
+        'GUICtrlSlider_GetPageSize GUICtrlSlider_GetPos ' +
+        'GUICtrlSlider_GetRange GUICtrlSlider_GetRangeMax ' +
+        'GUICtrlSlider_GetRangeMin GUICtrlSlider_GetSel ' +
+        'GUICtrlSlider_GetSelEnd GUICtrlSlider_GetSelStart ' +
+        'GUICtrlSlider_GetThumbLength GUICtrlSlider_GetThumbRect ' +
+        'GUICtrlSlider_GetThumbRectEx GUICtrlSlider_GetTic ' +
+        'GUICtrlSlider_GetTicPos GUICtrlSlider_GetToolTips ' +
+        'GUICtrlSlider_GetUnicodeFormat GUICtrlSlider_SetBuddy ' +
+        'GUICtrlSlider_SetLineSize GUICtrlSlider_SetPageSize ' +
+        'GUICtrlSlider_SetPos GUICtrlSlider_SetRange ' +
+        'GUICtrlSlider_SetRangeMax GUICtrlSlider_SetRangeMin ' +
+        'GUICtrlSlider_SetSel GUICtrlSlider_SetSelEnd ' +
+        'GUICtrlSlider_SetSelStart GUICtrlSlider_SetThumbLength ' +
+        'GUICtrlSlider_SetTic GUICtrlSlider_SetTicFreq ' +
+        'GUICtrlSlider_SetTipSide GUICtrlSlider_SetToolTips ' +
+        'GUICtrlSlider_SetUnicodeFormat GUICtrlStatusBar_Create ' +
+        'GUICtrlStatusBar_Destroy GUICtrlStatusBar_EmbedControl ' +
+        'GUICtrlStatusBar_GetBorders GUICtrlStatusBar_GetBordersHorz ' +
+        'GUICtrlStatusBar_GetBordersRect GUICtrlStatusBar_GetBordersVert ' +
+        'GUICtrlStatusBar_GetCount GUICtrlStatusBar_GetHeight ' +
+        'GUICtrlStatusBar_GetIcon GUICtrlStatusBar_GetParts ' +
+        'GUICtrlStatusBar_GetRect GUICtrlStatusBar_GetRectEx ' +
+        'GUICtrlStatusBar_GetText GUICtrlStatusBar_GetTextFlags ' +
+        'GUICtrlStatusBar_GetTextLength GUICtrlStatusBar_GetTextLengthEx ' +
+        'GUICtrlStatusBar_GetTipText GUICtrlStatusBar_GetUnicodeFormat ' +
+        'GUICtrlStatusBar_GetWidth GUICtrlStatusBar_IsSimple ' +
+        'GUICtrlStatusBar_Resize GUICtrlStatusBar_SetBkColor ' +
+        'GUICtrlStatusBar_SetIcon GUICtrlStatusBar_SetMinHeight ' +
+        'GUICtrlStatusBar_SetParts GUICtrlStatusBar_SetSimple ' +
+        'GUICtrlStatusBar_SetText GUICtrlStatusBar_SetTipText ' +
+        'GUICtrlStatusBar_SetUnicodeFormat GUICtrlStatusBar_ShowHide ' +
+        'GUICtrlTab_ActivateTab GUICtrlTab_ClickTab GUICtrlTab_Create ' +
+        'GUICtrlTab_DeleteAllItems GUICtrlTab_DeleteItem ' +
+        'GUICtrlTab_DeselectAll GUICtrlTab_Destroy GUICtrlTab_FindTab ' +
+        'GUICtrlTab_GetCurFocus GUICtrlTab_GetCurSel ' +
+        'GUICtrlTab_GetDisplayRect GUICtrlTab_GetDisplayRectEx ' +
+        'GUICtrlTab_GetExtendedStyle GUICtrlTab_GetImageList ' +
+        'GUICtrlTab_GetItem GUICtrlTab_GetItemCount ' +
+        'GUICtrlTab_GetItemImage GUICtrlTab_GetItemParam ' +
+        'GUICtrlTab_GetItemRect GUICtrlTab_GetItemRectEx ' +
+        'GUICtrlTab_GetItemState GUICtrlTab_GetItemText ' +
+        'GUICtrlTab_GetRowCount GUICtrlTab_GetToolTips ' +
+        'GUICtrlTab_GetUnicodeFormat GUICtrlTab_HighlightItem ' +
+        'GUICtrlTab_HitTest GUICtrlTab_InsertItem ' +
+        'GUICtrlTab_RemoveImage GUICtrlTab_SetCurFocus ' +
+        'GUICtrlTab_SetCurSel GUICtrlTab_SetExtendedStyle ' +
+        'GUICtrlTab_SetImageList GUICtrlTab_SetItem ' +
+        'GUICtrlTab_SetItemImage GUICtrlTab_SetItemParam ' +
+        'GUICtrlTab_SetItemSize GUICtrlTab_SetItemState ' +
+        'GUICtrlTab_SetItemText GUICtrlTab_SetMinTabWidth ' +
+        'GUICtrlTab_SetPadding GUICtrlTab_SetToolTips ' +
+        'GUICtrlTab_SetUnicodeFormat GUICtrlToolbar_AddBitmap ' +
+        'GUICtrlToolbar_AddButton GUICtrlToolbar_AddButtonSep ' +
+        'GUICtrlToolbar_AddString GUICtrlToolbar_ButtonCount ' +
+        'GUICtrlToolbar_CheckButton GUICtrlToolbar_ClickAccel ' +
+        'GUICtrlToolbar_ClickButton GUICtrlToolbar_ClickIndex ' +
+        'GUICtrlToolbar_CommandToIndex GUICtrlToolbar_Create ' +
+        'GUICtrlToolbar_Customize GUICtrlToolbar_DeleteButton ' +
+        'GUICtrlToolbar_Destroy GUICtrlToolbar_EnableButton ' +
+        'GUICtrlToolbar_FindToolbar GUICtrlToolbar_GetAnchorHighlight ' +
+        'GUICtrlToolbar_GetBitmapFlags GUICtrlToolbar_GetButtonBitmap ' +
+        'GUICtrlToolbar_GetButtonInfo GUICtrlToolbar_GetButtonInfoEx ' +
+        'GUICtrlToolbar_GetButtonParam GUICtrlToolbar_GetButtonRect ' +
+        'GUICtrlToolbar_GetButtonRectEx GUICtrlToolbar_GetButtonSize ' +
+        'GUICtrlToolbar_GetButtonState GUICtrlToolbar_GetButtonStyle ' +
+        'GUICtrlToolbar_GetButtonText GUICtrlToolbar_GetColorScheme ' +
+        'GUICtrlToolbar_GetDisabledImageList ' +
+        'GUICtrlToolbar_GetExtendedStyle GUICtrlToolbar_GetHotImageList ' +
+        'GUICtrlToolbar_GetHotItem GUICtrlToolbar_GetImageList ' +
+        'GUICtrlToolbar_GetInsertMark GUICtrlToolbar_GetInsertMarkColor ' +
+        'GUICtrlToolbar_GetMaxSize GUICtrlToolbar_GetMetrics ' +
+        'GUICtrlToolbar_GetPadding GUICtrlToolbar_GetRows ' +
+        'GUICtrlToolbar_GetString GUICtrlToolbar_GetStyle ' +
+        'GUICtrlToolbar_GetStyleAltDrag ' +
+        'GUICtrlToolbar_GetStyleCustomErase GUICtrlToolbar_GetStyleFlat ' +
+        'GUICtrlToolbar_GetStyleList GUICtrlToolbar_GetStyleRegisterDrop ' +
+        'GUICtrlToolbar_GetStyleToolTips ' +
+        'GUICtrlToolbar_GetStyleTransparent ' +
+        'GUICtrlToolbar_GetStyleWrapable GUICtrlToolbar_GetTextRows ' +
+        'GUICtrlToolbar_GetToolTips GUICtrlToolbar_GetUnicodeFormat ' +
+        'GUICtrlToolbar_HideButton GUICtrlToolbar_HighlightButton ' +
+        'GUICtrlToolbar_HitTest GUICtrlToolbar_IndexToCommand ' +
+        'GUICtrlToolbar_InsertButton GUICtrlToolbar_InsertMarkHitTest ' +
+        'GUICtrlToolbar_IsButtonChecked GUICtrlToolbar_IsButtonEnabled ' +
+        'GUICtrlToolbar_IsButtonHidden ' +
+        'GUICtrlToolbar_IsButtonHighlighted ' +
+        'GUICtrlToolbar_IsButtonIndeterminate ' +
+        'GUICtrlToolbar_IsButtonPressed GUICtrlToolbar_LoadBitmap ' +
+        'GUICtrlToolbar_LoadImages GUICtrlToolbar_MapAccelerator ' +
+        'GUICtrlToolbar_MoveButton GUICtrlToolbar_PressButton ' +
+        'GUICtrlToolbar_SetAnchorHighlight GUICtrlToolbar_SetBitmapSize ' +
+        'GUICtrlToolbar_SetButtonBitMap GUICtrlToolbar_SetButtonInfo ' +
+        'GUICtrlToolbar_SetButtonInfoEx GUICtrlToolbar_SetButtonParam ' +
+        'GUICtrlToolbar_SetButtonSize GUICtrlToolbar_SetButtonState ' +
+        'GUICtrlToolbar_SetButtonStyle GUICtrlToolbar_SetButtonText ' +
+        'GUICtrlToolbar_SetButtonWidth GUICtrlToolbar_SetCmdID ' +
+        'GUICtrlToolbar_SetColorScheme ' +
+        'GUICtrlToolbar_SetDisabledImageList ' +
+        'GUICtrlToolbar_SetDrawTextFlags GUICtrlToolbar_SetExtendedStyle ' +
+        'GUICtrlToolbar_SetHotImageList GUICtrlToolbar_SetHotItem ' +
+        'GUICtrlToolbar_SetImageList GUICtrlToolbar_SetIndent ' +
+        'GUICtrlToolbar_SetIndeterminate GUICtrlToolbar_SetInsertMark ' +
+        'GUICtrlToolbar_SetInsertMarkColor GUICtrlToolbar_SetMaxTextRows ' +
+        'GUICtrlToolbar_SetMetrics GUICtrlToolbar_SetPadding ' +
+        'GUICtrlToolbar_SetParent GUICtrlToolbar_SetRows ' +
+        'GUICtrlToolbar_SetStyle GUICtrlToolbar_SetStyleAltDrag ' +
+        'GUICtrlToolbar_SetStyleCustomErase GUICtrlToolbar_SetStyleFlat ' +
+        'GUICtrlToolbar_SetStyleList GUICtrlToolbar_SetStyleRegisterDrop ' +
+        'GUICtrlToolbar_SetStyleToolTips ' +
+        'GUICtrlToolbar_SetStyleTransparent ' +
+        'GUICtrlToolbar_SetStyleWrapable GUICtrlToolbar_SetToolTips ' +
+        'GUICtrlToolbar_SetUnicodeFormat GUICtrlToolbar_SetWindowTheme ' +
+        'GUICtrlTreeView_Add GUICtrlTreeView_AddChild ' +
+        'GUICtrlTreeView_AddChildFirst GUICtrlTreeView_AddFirst ' +
+        'GUICtrlTreeView_BeginUpdate GUICtrlTreeView_ClickItem ' +
+        'GUICtrlTreeView_Create GUICtrlTreeView_CreateDragImage ' +
+        'GUICtrlTreeView_CreateSolidBitMap GUICtrlTreeView_Delete ' +
+        'GUICtrlTreeView_DeleteAll GUICtrlTreeView_DeleteChildren ' +
+        'GUICtrlTreeView_Destroy GUICtrlTreeView_DisplayRect ' +
+        'GUICtrlTreeView_DisplayRectEx GUICtrlTreeView_EditText ' +
+        'GUICtrlTreeView_EndEdit GUICtrlTreeView_EndUpdate ' +
+        'GUICtrlTreeView_EnsureVisible GUICtrlTreeView_Expand ' +
+        'GUICtrlTreeView_ExpandedOnce GUICtrlTreeView_FindItem ' +
+        'GUICtrlTreeView_FindItemEx GUICtrlTreeView_GetBkColor ' +
+        'GUICtrlTreeView_GetBold GUICtrlTreeView_GetChecked ' +
+        'GUICtrlTreeView_GetChildCount GUICtrlTreeView_GetChildren ' +
+        'GUICtrlTreeView_GetCount GUICtrlTreeView_GetCut ' +
+        'GUICtrlTreeView_GetDropTarget GUICtrlTreeView_GetEditControl ' +
+        'GUICtrlTreeView_GetExpanded GUICtrlTreeView_GetFirstChild ' +
+        'GUICtrlTreeView_GetFirstItem GUICtrlTreeView_GetFirstVisible ' +
+        'GUICtrlTreeView_GetFocused GUICtrlTreeView_GetHeight ' +
+        'GUICtrlTreeView_GetImageIndex ' +
+        'GUICtrlTreeView_GetImageListIconHandle ' +
+        'GUICtrlTreeView_GetIndent GUICtrlTreeView_GetInsertMarkColor ' +
+        'GUICtrlTreeView_GetISearchString GUICtrlTreeView_GetItemByIndex ' +
+        'GUICtrlTreeView_GetItemHandle GUICtrlTreeView_GetItemParam ' +
+        'GUICtrlTreeView_GetLastChild GUICtrlTreeView_GetLineColor ' +
+        'GUICtrlTreeView_GetNext GUICtrlTreeView_GetNextChild ' +
+        'GUICtrlTreeView_GetNextSibling GUICtrlTreeView_GetNextVisible ' +
+        'GUICtrlTreeView_GetNormalImageList ' +
+        'GUICtrlTreeView_GetParentHandle GUICtrlTreeView_GetParentParam ' +
+        'GUICtrlTreeView_GetPrev GUICtrlTreeView_GetPrevChild ' +
+        'GUICtrlTreeView_GetPrevSibling GUICtrlTreeView_GetPrevVisible ' +
+        'GUICtrlTreeView_GetScrollTime GUICtrlTreeView_GetSelected ' +
+        'GUICtrlTreeView_GetSelectedImageIndex ' +
+        'GUICtrlTreeView_GetSelection GUICtrlTreeView_GetSiblingCount ' +
+        'GUICtrlTreeView_GetState GUICtrlTreeView_GetStateImageIndex ' +
+        'GUICtrlTreeView_GetStateImageList GUICtrlTreeView_GetText ' +
+        'GUICtrlTreeView_GetTextColor GUICtrlTreeView_GetToolTips ' +
+        'GUICtrlTreeView_GetTree GUICtrlTreeView_GetUnicodeFormat ' +
+        'GUICtrlTreeView_GetVisible GUICtrlTreeView_GetVisibleCount ' +
+        'GUICtrlTreeView_HitTest GUICtrlTreeView_HitTestEx ' +
+        'GUICtrlTreeView_HitTestItem GUICtrlTreeView_Index ' +
+        'GUICtrlTreeView_InsertItem GUICtrlTreeView_IsFirstItem ' +
+        'GUICtrlTreeView_IsParent GUICtrlTreeView_Level ' +
+        'GUICtrlTreeView_SelectItem GUICtrlTreeView_SelectItemByIndex ' +
+        'GUICtrlTreeView_SetBkColor GUICtrlTreeView_SetBold ' +
+        'GUICtrlTreeView_SetChecked GUICtrlTreeView_SetCheckedByIndex ' +
+        'GUICtrlTreeView_SetChildren GUICtrlTreeView_SetCut ' +
+        'GUICtrlTreeView_SetDropTarget GUICtrlTreeView_SetFocused ' +
+        'GUICtrlTreeView_SetHeight GUICtrlTreeView_SetIcon ' +
+        'GUICtrlTreeView_SetImageIndex GUICtrlTreeView_SetIndent ' +
+        'GUICtrlTreeView_SetInsertMark ' +
+        'GUICtrlTreeView_SetInsertMarkColor ' +
+        'GUICtrlTreeView_SetItemHeight GUICtrlTreeView_SetItemParam ' +
+        'GUICtrlTreeView_SetLineColor GUICtrlTreeView_SetNormalImageList ' +
+        'GUICtrlTreeView_SetScrollTime GUICtrlTreeView_SetSelected ' +
+        'GUICtrlTreeView_SetSelectedImageIndex GUICtrlTreeView_SetState ' +
+        'GUICtrlTreeView_SetStateImageIndex ' +
+        'GUICtrlTreeView_SetStateImageList GUICtrlTreeView_SetText ' +
+        'GUICtrlTreeView_SetTextColor GUICtrlTreeView_SetToolTips ' +
+        'GUICtrlTreeView_SetUnicodeFormat GUICtrlTreeView_Sort ' +
+        'GUIImageList_Add GUIImageList_AddBitmap GUIImageList_AddIcon ' +
+        'GUIImageList_AddMasked GUIImageList_BeginDrag ' +
+        'GUIImageList_Copy GUIImageList_Create GUIImageList_Destroy ' +
+        'GUIImageList_DestroyIcon GUIImageList_DragEnter ' +
+        'GUIImageList_DragLeave GUIImageList_DragMove ' +
+        'GUIImageList_Draw GUIImageList_DrawEx GUIImageList_Duplicate ' +
+        'GUIImageList_EndDrag GUIImageList_GetBkColor ' +
+        'GUIImageList_GetIcon GUIImageList_GetIconHeight ' +
+        'GUIImageList_GetIconSize GUIImageList_GetIconSizeEx ' +
+        'GUIImageList_GetIconWidth GUIImageList_GetImageCount ' +
+        'GUIImageList_GetImageInfoEx GUIImageList_Remove ' +
+        'GUIImageList_ReplaceIcon GUIImageList_SetBkColor ' +
+        'GUIImageList_SetIconSize GUIImageList_SetImageCount ' +
+        'GUIImageList_Swap GUIScrollBars_EnableScrollBar ' +
+        'GUIScrollBars_GetScrollBarInfoEx GUIScrollBars_GetScrollBarRect ' +
+        'GUIScrollBars_GetScrollBarRGState ' +
+        'GUIScrollBars_GetScrollBarXYLineButton ' +
+        'GUIScrollBars_GetScrollBarXYThumbBottom ' +
+        'GUIScrollBars_GetScrollBarXYThumbTop ' +
+        'GUIScrollBars_GetScrollInfo GUIScrollBars_GetScrollInfoEx ' +
+        'GUIScrollBars_GetScrollInfoMax GUIScrollBars_GetScrollInfoMin ' +
+        'GUIScrollBars_GetScrollInfoPage GUIScrollBars_GetScrollInfoPos ' +
+        'GUIScrollBars_GetScrollInfoTrackPos GUIScrollBars_GetScrollPos ' +
+        'GUIScrollBars_GetScrollRange GUIScrollBars_Init ' +
+        'GUIScrollBars_ScrollWindow GUIScrollBars_SetScrollInfo ' +
+        'GUIScrollBars_SetScrollInfoMax GUIScrollBars_SetScrollInfoMin ' +
+        'GUIScrollBars_SetScrollInfoPage GUIScrollBars_SetScrollInfoPos ' +
+        'GUIScrollBars_SetScrollRange GUIScrollBars_ShowScrollBar ' +
+        'GUIToolTip_Activate GUIToolTip_AddTool GUIToolTip_AdjustRect ' +
+        'GUIToolTip_BitsToTTF GUIToolTip_Create GUIToolTip_Deactivate ' +
+        'GUIToolTip_DelTool GUIToolTip_Destroy GUIToolTip_EnumTools ' +
+        'GUIToolTip_GetBubbleHeight GUIToolTip_GetBubbleSize ' +
+        'GUIToolTip_GetBubbleWidth GUIToolTip_GetCurrentTool ' +
+        'GUIToolTip_GetDelayTime GUIToolTip_GetMargin ' +
+        'GUIToolTip_GetMarginEx GUIToolTip_GetMaxTipWidth ' +
+        'GUIToolTip_GetText GUIToolTip_GetTipBkColor ' +
+        'GUIToolTip_GetTipTextColor GUIToolTip_GetTitleBitMap ' +
+        'GUIToolTip_GetTitleText GUIToolTip_GetToolCount ' +
+        'GUIToolTip_GetToolInfo GUIToolTip_HitTest ' +
+        'GUIToolTip_NewToolRect GUIToolTip_Pop GUIToolTip_PopUp ' +
+        'GUIToolTip_SetDelayTime GUIToolTip_SetMargin ' +
+        'GUIToolTip_SetMaxTipWidth GUIToolTip_SetTipBkColor ' +
+        'GUIToolTip_SetTipTextColor GUIToolTip_SetTitle ' +
+        'GUIToolTip_SetToolInfo GUIToolTip_SetWindowTheme ' +
+        'GUIToolTip_ToolExists GUIToolTip_ToolToArray ' +
+        'GUIToolTip_TrackActivate GUIToolTip_TrackPosition ' +
+        'GUIToolTip_Update GUIToolTip_UpdateTipText HexToString ' +
+        'IEAction IEAttach IEBodyReadHTML IEBodyReadText ' +
+        'IEBodyWriteHTML IECreate IECreateEmbedded IEDocGetObj ' +
+        'IEDocInsertHTML IEDocInsertText IEDocReadHTML ' +
+        'IEDocWriteHTML IEErrorNotify IEFormElementCheckBoxSelect ' +
+        'IEFormElementGetCollection IEFormElementGetObjByName ' +
+        'IEFormElementGetValue IEFormElementOptionSelect ' +
+        'IEFormElementRadioSelect IEFormElementSetValue ' +
+        'IEFormGetCollection IEFormGetObjByName IEFormImageClick ' +
+        'IEFormReset IEFormSubmit IEFrameGetCollection ' +
+        'IEFrameGetObjByName IEGetObjById IEGetObjByName ' +
+        'IEHeadInsertEventScript IEImgClick IEImgGetCollection ' +
+        'IEIsFrameSet IELinkClickByIndex IELinkClickByText ' +
+        'IELinkGetCollection IELoadWait IELoadWaitTimeout IENavigate ' +
+        'IEPropertyGet IEPropertySet IEQuit IETableGetCollection ' +
+        'IETableWriteToArray IETagNameAllGetCollection ' +
+        'IETagNameGetCollection IE_Example IE_Introduction ' +
+        'IE_VersionInfo INetExplorerCapable INetGetSource INetMail ' +
+        'INetSmtpMail IsPressed MathCheckDiv Max MemGlobalAlloc ' +
+        'MemGlobalFree MemGlobalLock MemGlobalSize MemGlobalUnlock ' +
+        'MemMoveMemory MemVirtualAlloc MemVirtualAllocEx ' +
+        'MemVirtualFree MemVirtualFreeEx Min MouseTrap ' +
+        'NamedPipes_CallNamedPipe NamedPipes_ConnectNamedPipe ' +
+        'NamedPipes_CreateNamedPipe NamedPipes_CreatePipe ' +
+        'NamedPipes_DisconnectNamedPipe ' +
+        'NamedPipes_GetNamedPipeHandleState NamedPipes_GetNamedPipeInfo ' +
+        'NamedPipes_PeekNamedPipe NamedPipes_SetNamedPipeHandleState ' +
+        'NamedPipes_TransactNamedPipe NamedPipes_WaitNamedPipe ' +
+        'Net_Share_ConnectionEnum Net_Share_FileClose ' +
+        'Net_Share_FileEnum Net_Share_FileGetInfo Net_Share_PermStr ' +
+        'Net_Share_ResourceStr Net_Share_SessionDel ' +
+        'Net_Share_SessionEnum Net_Share_SessionGetInfo ' +
+        'Net_Share_ShareAdd Net_Share_ShareCheck Net_Share_ShareDel ' +
+        'Net_Share_ShareEnum Net_Share_ShareGetInfo ' +
+        'Net_Share_ShareSetInfo Net_Share_StatisticsGetSvr ' +
+        'Net_Share_StatisticsGetWrk Now NowCalc NowCalcDate ' +
+        'NowDate NowTime PathFull PathGetRelative PathMake ' +
+        'PathSplit ProcessGetName ProcessGetPriority Radian ' +
+        'ReplaceStringInFile RunDos ScreenCapture_Capture ' +
+        'ScreenCapture_CaptureWnd ScreenCapture_SaveImage ' +
+        'ScreenCapture_SetBMPFormat ScreenCapture_SetJPGQuality ' +
+        'ScreenCapture_SetTIFColorDepth ScreenCapture_SetTIFCompression ' +
+        'Security__AdjustTokenPrivileges ' +
+        'Security__CreateProcessWithToken Security__DuplicateTokenEx ' +
+        'Security__GetAccountSid Security__GetLengthSid ' +
+        'Security__GetTokenInformation Security__ImpersonateSelf ' +
+        'Security__IsValidSid Security__LookupAccountName ' +
+        'Security__LookupAccountSid Security__LookupPrivilegeValue ' +
+        'Security__OpenProcessToken Security__OpenThreadToken ' +
+        'Security__OpenThreadTokenEx Security__SetPrivilege ' +
+        'Security__SetTokenInformation Security__SidToStringSid ' +
+        'Security__SidTypeStr Security__StringSidToSid SendMessage ' +
+        'SendMessageA SetDate SetTime Singleton SoundClose ' +
+        'SoundLength SoundOpen SoundPause SoundPlay SoundPos ' +
+        'SoundResume SoundSeek SoundStatus SoundStop ' +
+        'SQLite_Changes SQLite_Close SQLite_Display2DResult ' +
+        'SQLite_Encode SQLite_ErrCode SQLite_ErrMsg SQLite_Escape ' +
+        'SQLite_Exec SQLite_FastEncode SQLite_FastEscape ' +
+        'SQLite_FetchData SQLite_FetchNames SQLite_GetTable ' +
+        'SQLite_GetTable2d SQLite_LastInsertRowID SQLite_LibVersion ' +
+        'SQLite_Open SQLite_Query SQLite_QueryFinalize ' +
+        'SQLite_QueryReset SQLite_QuerySingleRow SQLite_SafeMode ' +
+        'SQLite_SetTimeout SQLite_Shutdown SQLite_SQLiteExe ' +
+        'SQLite_Startup SQLite_TotalChanges StringBetween ' +
+        'StringExplode StringInsert StringProper StringRepeat ' +
+        'StringTitleCase StringToHex TCPIpToName TempFile ' +
+        'TicksToTime Timer_Diff Timer_GetIdleTime Timer_GetTimerID ' +
+        'Timer_Init Timer_KillAllTimers Timer_KillTimer ' +
+        'Timer_SetTimer TimeToTicks VersionCompare viClose ' +
+        'viExecCommand viFindGpib viGpibBusReset viGTL ' +
+        'viInteractiveControl viOpen viSetAttribute viSetTimeout ' +
+        'WeekNumberISO WinAPI_AbortPath WinAPI_ActivateKeyboardLayout ' +
+        'WinAPI_AddClipboardFormatListener WinAPI_AddFontMemResourceEx ' +
+        'WinAPI_AddFontResourceEx WinAPI_AddIconOverlay ' +
+        'WinAPI_AddIconTransparency WinAPI_AddMRUString ' +
+        'WinAPI_AdjustBitmap WinAPI_AdjustTokenPrivileges ' +
+        'WinAPI_AdjustWindowRectEx WinAPI_AlphaBlend WinAPI_AngleArc ' +
+        'WinAPI_AnimateWindow WinAPI_Arc WinAPI_ArcTo ' +
+        'WinAPI_ArrayToStruct WinAPI_AssignProcessToJobObject ' +
+        'WinAPI_AssocGetPerceivedType WinAPI_AssocQueryString ' +
+        'WinAPI_AttachConsole WinAPI_AttachThreadInput ' +
+        'WinAPI_BackupRead WinAPI_BackupReadAbort WinAPI_BackupSeek ' +
+        'WinAPI_BackupWrite WinAPI_BackupWriteAbort WinAPI_Beep ' +
+        'WinAPI_BeginBufferedPaint WinAPI_BeginDeferWindowPos ' +
+        'WinAPI_BeginPaint WinAPI_BeginPath WinAPI_BeginUpdateResource ' +
+        'WinAPI_BitBlt WinAPI_BringWindowToTop ' +
+        'WinAPI_BroadcastSystemMessage WinAPI_BrowseForFolderDlg ' +
+        'WinAPI_BufferedPaintClear WinAPI_BufferedPaintInit ' +
+        'WinAPI_BufferedPaintSetAlpha WinAPI_BufferedPaintUnInit ' +
+        'WinAPI_CallNextHookEx WinAPI_CallWindowProc ' +
+        'WinAPI_CallWindowProcW WinAPI_CascadeWindows ' +
+        'WinAPI_ChangeWindowMessageFilterEx WinAPI_CharToOem ' +
+        'WinAPI_ChildWindowFromPointEx WinAPI_ClientToScreen ' +
+        'WinAPI_ClipCursor WinAPI_CloseDesktop WinAPI_CloseEnhMetaFile ' +
+        'WinAPI_CloseFigure WinAPI_CloseHandle WinAPI_CloseThemeData ' +
+        'WinAPI_CloseWindow WinAPI_CloseWindowStation ' +
+        'WinAPI_CLSIDFromProgID WinAPI_CoInitialize ' +
+        'WinAPI_ColorAdjustLuma WinAPI_ColorHLSToRGB ' +
+        'WinAPI_ColorRGBToHLS WinAPI_CombineRgn ' +
+        'WinAPI_CombineTransform WinAPI_CommandLineToArgv ' +
+        'WinAPI_CommDlgExtendedError WinAPI_CommDlgExtendedErrorEx ' +
+        'WinAPI_CompareString WinAPI_CompressBitmapBits ' +
+        'WinAPI_CompressBuffer WinAPI_ComputeCrc32 ' +
+        'WinAPI_ConfirmCredentials WinAPI_CopyBitmap WinAPI_CopyCursor ' +
+        'WinAPI_CopyEnhMetaFile WinAPI_CopyFileEx WinAPI_CopyIcon ' +
+        'WinAPI_CopyImage WinAPI_CopyRect WinAPI_CopyStruct ' +
+        'WinAPI_CoTaskMemAlloc WinAPI_CoTaskMemFree ' +
+        'WinAPI_CoTaskMemRealloc WinAPI_CoUninitialize ' +
+        'WinAPI_Create32BitHBITMAP WinAPI_Create32BitHICON ' +
+        'WinAPI_CreateANDBitmap WinAPI_CreateBitmap ' +
+        'WinAPI_CreateBitmapIndirect WinAPI_CreateBrushIndirect ' +
+        'WinAPI_CreateBuffer WinAPI_CreateBufferFromStruct ' +
+        'WinAPI_CreateCaret WinAPI_CreateColorAdjustment ' +
+        'WinAPI_CreateCompatibleBitmap WinAPI_CreateCompatibleBitmapEx ' +
+        'WinAPI_CreateCompatibleDC WinAPI_CreateDesktop ' +
+        'WinAPI_CreateDIB WinAPI_CreateDIBColorTable ' +
+        'WinAPI_CreateDIBitmap WinAPI_CreateDIBSection ' +
+        'WinAPI_CreateDirectory WinAPI_CreateDirectoryEx ' +
+        'WinAPI_CreateEllipticRgn WinAPI_CreateEmptyIcon ' +
+        'WinAPI_CreateEnhMetaFile WinAPI_CreateEvent WinAPI_CreateFile ' +
+        'WinAPI_CreateFileEx WinAPI_CreateFileMapping ' +
+        'WinAPI_CreateFont WinAPI_CreateFontEx ' +
+        'WinAPI_CreateFontIndirect WinAPI_CreateGUID ' +
+        'WinAPI_CreateHardLink WinAPI_CreateIcon ' +
+        'WinAPI_CreateIconFromResourceEx WinAPI_CreateIconIndirect ' +
+        'WinAPI_CreateJobObject WinAPI_CreateMargins ' +
+        'WinAPI_CreateMRUList WinAPI_CreateMutex WinAPI_CreateNullRgn ' +
+        'WinAPI_CreateNumberFormatInfo WinAPI_CreateObjectID ' +
+        'WinAPI_CreatePen WinAPI_CreatePoint WinAPI_CreatePolygonRgn ' +
+        'WinAPI_CreateProcess WinAPI_CreateProcessWithToken ' +
+        'WinAPI_CreateRect WinAPI_CreateRectEx WinAPI_CreateRectRgn ' +
+        'WinAPI_CreateRectRgnIndirect WinAPI_CreateRoundRectRgn ' +
+        'WinAPI_CreateSemaphore WinAPI_CreateSize ' +
+        'WinAPI_CreateSolidBitmap WinAPI_CreateSolidBrush ' +
+        'WinAPI_CreateStreamOnHGlobal WinAPI_CreateString ' +
+        'WinAPI_CreateSymbolicLink WinAPI_CreateTransform ' +
+        'WinAPI_CreateWindowEx WinAPI_CreateWindowStation ' +
+        'WinAPI_DecompressBuffer WinAPI_DecryptFile ' +
+        'WinAPI_DeferWindowPos WinAPI_DefineDosDevice ' +
+        'WinAPI_DefRawInputProc WinAPI_DefSubclassProc ' +
+        'WinAPI_DefWindowProc WinAPI_DefWindowProcW WinAPI_DeleteDC ' +
+        'WinAPI_DeleteEnhMetaFile WinAPI_DeleteFile ' +
+        'WinAPI_DeleteObject WinAPI_DeleteObjectID ' +
+        'WinAPI_DeleteVolumeMountPoint WinAPI_DeregisterShellHookWindow ' +
+        'WinAPI_DestroyCaret WinAPI_DestroyCursor WinAPI_DestroyIcon ' +
+        'WinAPI_DestroyWindow WinAPI_DeviceIoControl ' +
+        'WinAPI_DisplayStruct WinAPI_DllGetVersion WinAPI_DllInstall ' +
+        'WinAPI_DllUninstall WinAPI_DPtoLP WinAPI_DragAcceptFiles ' +
+        'WinAPI_DragFinish WinAPI_DragQueryFileEx ' +
+        'WinAPI_DragQueryPoint WinAPI_DrawAnimatedRects ' +
+        'WinAPI_DrawBitmap WinAPI_DrawEdge WinAPI_DrawFocusRect ' +
+        'WinAPI_DrawFrameControl WinAPI_DrawIcon WinAPI_DrawIconEx ' +
+        'WinAPI_DrawLine WinAPI_DrawShadowText WinAPI_DrawText ' +
+        'WinAPI_DrawThemeBackground WinAPI_DrawThemeEdge ' +
+        'WinAPI_DrawThemeIcon WinAPI_DrawThemeParentBackground ' +
+        'WinAPI_DrawThemeText WinAPI_DrawThemeTextEx ' +
+        'WinAPI_DuplicateEncryptionInfoFile WinAPI_DuplicateHandle ' +
+        'WinAPI_DuplicateTokenEx WinAPI_DwmDefWindowProc ' +
+        'WinAPI_DwmEnableBlurBehindWindow WinAPI_DwmEnableComposition ' +
+        'WinAPI_DwmExtendFrameIntoClientArea ' +
+        'WinAPI_DwmGetColorizationColor ' +
+        'WinAPI_DwmGetColorizationParameters ' +
+        'WinAPI_DwmGetWindowAttribute WinAPI_DwmInvalidateIconicBitmaps ' +
+        'WinAPI_DwmIsCompositionEnabled ' +
+        'WinAPI_DwmQueryThumbnailSourceSize WinAPI_DwmRegisterThumbnail ' +
+        'WinAPI_DwmSetColorizationParameters ' +
+        'WinAPI_DwmSetIconicLivePreviewBitmap ' +
+        'WinAPI_DwmSetIconicThumbnail WinAPI_DwmSetWindowAttribute ' +
+        'WinAPI_DwmUnregisterThumbnail ' +
+        'WinAPI_DwmUpdateThumbnailProperties WinAPI_DWordToFloat ' +
+        'WinAPI_DWordToInt WinAPI_EjectMedia WinAPI_Ellipse ' +
+        'WinAPI_EmptyWorkingSet WinAPI_EnableWindow WinAPI_EncryptFile ' +
+        'WinAPI_EncryptionDisable WinAPI_EndBufferedPaint ' +
+        'WinAPI_EndDeferWindowPos WinAPI_EndPaint WinAPI_EndPath ' +
+        'WinAPI_EndUpdateResource WinAPI_EnumChildProcess ' +
+        'WinAPI_EnumChildWindows WinAPI_EnumDesktops ' +
+        'WinAPI_EnumDesktopWindows WinAPI_EnumDeviceDrivers ' +
+        'WinAPI_EnumDisplayDevices WinAPI_EnumDisplayMonitors ' +
+        'WinAPI_EnumDisplaySettings WinAPI_EnumDllProc ' +
+        'WinAPI_EnumFiles WinAPI_EnumFileStreams ' +
+        'WinAPI_EnumFontFamilies WinAPI_EnumHardLinks ' +
+        'WinAPI_EnumMRUList WinAPI_EnumPageFiles ' +
+        'WinAPI_EnumProcessHandles WinAPI_EnumProcessModules ' +
+        'WinAPI_EnumProcessThreads WinAPI_EnumProcessWindows ' +
+        'WinAPI_EnumRawInputDevices WinAPI_EnumResourceLanguages ' +
+        'WinAPI_EnumResourceNames WinAPI_EnumResourceTypes ' +
+        'WinAPI_EnumSystemGeoID WinAPI_EnumSystemLocales ' +
+        'WinAPI_EnumUILanguages WinAPI_EnumWindows ' +
+        'WinAPI_EnumWindowsPopup WinAPI_EnumWindowStations ' +
+        'WinAPI_EnumWindowsTop WinAPI_EqualMemory WinAPI_EqualRect ' +
+        'WinAPI_EqualRgn WinAPI_ExcludeClipRect ' +
+        'WinAPI_ExpandEnvironmentStrings WinAPI_ExtCreatePen ' +
+        'WinAPI_ExtCreateRegion WinAPI_ExtFloodFill WinAPI_ExtractIcon ' +
+        'WinAPI_ExtractIconEx WinAPI_ExtSelectClipRgn ' +
+        'WinAPI_FatalAppExit WinAPI_FatalExit ' +
+        'WinAPI_FileEncryptionStatus WinAPI_FileExists ' +
+        'WinAPI_FileIconInit WinAPI_FileInUse WinAPI_FillMemory ' +
+        'WinAPI_FillPath WinAPI_FillRect WinAPI_FillRgn ' +
+        'WinAPI_FindClose WinAPI_FindCloseChangeNotification ' +
+        'WinAPI_FindExecutable WinAPI_FindFirstChangeNotification ' +
+        'WinAPI_FindFirstFile WinAPI_FindFirstFileName ' +
+        'WinAPI_FindFirstStream WinAPI_FindNextChangeNotification ' +
+        'WinAPI_FindNextFile WinAPI_FindNextFileName ' +
+        'WinAPI_FindNextStream WinAPI_FindResource ' +
+        'WinAPI_FindResourceEx WinAPI_FindTextDlg WinAPI_FindWindow ' +
+        'WinAPI_FlashWindow WinAPI_FlashWindowEx WinAPI_FlattenPath ' +
+        'WinAPI_FloatToDWord WinAPI_FloatToInt WinAPI_FlushFileBuffers ' +
+        'WinAPI_FlushFRBuffer WinAPI_FlushViewOfFile ' +
+        'WinAPI_FormatDriveDlg WinAPI_FormatMessage WinAPI_FrameRect ' +
+        'WinAPI_FrameRgn WinAPI_FreeLibrary WinAPI_FreeMemory ' +
+        'WinAPI_FreeMRUList WinAPI_FreeResource WinAPI_GdiComment ' +
+        'WinAPI_GetActiveWindow WinAPI_GetAllUsersProfileDirectory ' +
+        'WinAPI_GetAncestor WinAPI_GetApplicationRestartSettings ' +
+        'WinAPI_GetArcDirection WinAPI_GetAsyncKeyState ' +
+        'WinAPI_GetBinaryType WinAPI_GetBitmapBits ' +
+        'WinAPI_GetBitmapDimension WinAPI_GetBitmapDimensionEx ' +
+        'WinAPI_GetBkColor WinAPI_GetBkMode WinAPI_GetBoundsRect ' +
+        'WinAPI_GetBrushOrg WinAPI_GetBufferedPaintBits ' +
+        'WinAPI_GetBufferedPaintDC WinAPI_GetBufferedPaintTargetDC ' +
+        'WinAPI_GetBufferedPaintTargetRect WinAPI_GetBValue ' +
+        'WinAPI_GetCaretBlinkTime WinAPI_GetCaretPos WinAPI_GetCDType ' +
+        'WinAPI_GetClassInfoEx WinAPI_GetClassLongEx ' +
+        'WinAPI_GetClassName WinAPI_GetClientHeight ' +
+        'WinAPI_GetClientRect WinAPI_GetClientWidth ' +
+        'WinAPI_GetClipboardSequenceNumber WinAPI_GetClipBox ' +
+        'WinAPI_GetClipCursor WinAPI_GetClipRgn ' +
+        'WinAPI_GetColorAdjustment WinAPI_GetCompressedFileSize ' +
+        'WinAPI_GetCompression WinAPI_GetConnectedDlg ' +
+        'WinAPI_GetCurrentDirectory WinAPI_GetCurrentHwProfile ' +
+        'WinAPI_GetCurrentObject WinAPI_GetCurrentPosition ' +
+        'WinAPI_GetCurrentProcess ' +
+        'WinAPI_GetCurrentProcessExplicitAppUserModelID ' +
+        'WinAPI_GetCurrentProcessID WinAPI_GetCurrentThemeName ' +
+        'WinAPI_GetCurrentThread WinAPI_GetCurrentThreadId ' +
+        'WinAPI_GetCursor WinAPI_GetCursorInfo WinAPI_GetDateFormat ' +
+        'WinAPI_GetDC WinAPI_GetDCEx WinAPI_GetDefaultPrinter ' +
+        'WinAPI_GetDefaultUserProfileDirectory WinAPI_GetDesktopWindow ' +
+        'WinAPI_GetDeviceCaps WinAPI_GetDeviceDriverBaseName ' +
+        'WinAPI_GetDeviceDriverFileName WinAPI_GetDeviceGammaRamp ' +
+        'WinAPI_GetDIBColorTable WinAPI_GetDIBits ' +
+        'WinAPI_GetDiskFreeSpaceEx WinAPI_GetDlgCtrlID ' +
+        'WinAPI_GetDlgItem WinAPI_GetDllDirectory ' +
+        'WinAPI_GetDriveBusType WinAPI_GetDriveGeometryEx ' +
+        'WinAPI_GetDriveNumber WinAPI_GetDriveType ' +
+        'WinAPI_GetDurationFormat WinAPI_GetEffectiveClientRect ' +
+        'WinAPI_GetEnhMetaFile WinAPI_GetEnhMetaFileBits ' +
+        'WinAPI_GetEnhMetaFileDescription WinAPI_GetEnhMetaFileDimension ' +
+        'WinAPI_GetEnhMetaFileHeader WinAPI_GetErrorMessage ' +
+        'WinAPI_GetErrorMode WinAPI_GetExitCodeProcess ' +
+        'WinAPI_GetExtended WinAPI_GetFileAttributes WinAPI_GetFileID ' +
+        'WinAPI_GetFileInformationByHandle ' +
+        'WinAPI_GetFileInformationByHandleEx WinAPI_GetFilePointerEx ' +
+        'WinAPI_GetFileSizeEx WinAPI_GetFileSizeOnDisk ' +
+        'WinAPI_GetFileTitle WinAPI_GetFileType ' +
+        'WinAPI_GetFileVersionInfo WinAPI_GetFinalPathNameByHandle ' +
+        'WinAPI_GetFinalPathNameByHandleEx WinAPI_GetFocus ' +
+        'WinAPI_GetFontMemoryResourceInfo WinAPI_GetFontName ' +
+        'WinAPI_GetFontResourceInfo WinAPI_GetForegroundWindow ' +
+        'WinAPI_GetFRBuffer WinAPI_GetFullPathName WinAPI_GetGeoInfo ' +
+        'WinAPI_GetGlyphOutline WinAPI_GetGraphicsMode ' +
+        'WinAPI_GetGuiResources WinAPI_GetGUIThreadInfo ' +
+        'WinAPI_GetGValue WinAPI_GetHandleInformation ' +
+        'WinAPI_GetHGlobalFromStream WinAPI_GetIconDimension ' +
+        'WinAPI_GetIconInfo WinAPI_GetIconInfoEx WinAPI_GetIdleTime ' +
+        'WinAPI_GetKeyboardLayout WinAPI_GetKeyboardLayoutList ' +
+        'WinAPI_GetKeyboardState WinAPI_GetKeyboardType ' +
+        'WinAPI_GetKeyNameText WinAPI_GetKeyState ' +
+        'WinAPI_GetLastActivePopup WinAPI_GetLastError ' +
+        'WinAPI_GetLastErrorMessage WinAPI_GetLayeredWindowAttributes ' +
+        'WinAPI_GetLocaleInfo WinAPI_GetLogicalDrives ' +
+        'WinAPI_GetMapMode WinAPI_GetMemorySize ' +
+        'WinAPI_GetMessageExtraInfo WinAPI_GetModuleFileNameEx ' +
+        'WinAPI_GetModuleHandle WinAPI_GetModuleHandleEx ' +
+        'WinAPI_GetModuleInformation WinAPI_GetMonitorInfo ' +
+        'WinAPI_GetMousePos WinAPI_GetMousePosX WinAPI_GetMousePosY ' +
+        'WinAPI_GetMUILanguage WinAPI_GetNumberFormat WinAPI_GetObject ' +
+        'WinAPI_GetObjectID WinAPI_GetObjectInfoByHandle ' +
+        'WinAPI_GetObjectNameByHandle WinAPI_GetObjectType ' +
+        'WinAPI_GetOpenFileName WinAPI_GetOutlineTextMetrics ' +
+        'WinAPI_GetOverlappedResult WinAPI_GetParent ' +
+        'WinAPI_GetParentProcess WinAPI_GetPerformanceInfo ' +
+        'WinAPI_GetPEType WinAPI_GetPhysicallyInstalledSystemMemory ' +
+        'WinAPI_GetPixel WinAPI_GetPolyFillMode WinAPI_GetPosFromRect ' +
+        'WinAPI_GetPriorityClass WinAPI_GetProcAddress ' +
+        'WinAPI_GetProcessAffinityMask WinAPI_GetProcessCommandLine ' +
+        'WinAPI_GetProcessFileName WinAPI_GetProcessHandleCount ' +
+        'WinAPI_GetProcessID WinAPI_GetProcessIoCounters ' +
+        'WinAPI_GetProcessMemoryInfo WinAPI_GetProcessName ' +
+        'WinAPI_GetProcessShutdownParameters WinAPI_GetProcessTimes ' +
+        'WinAPI_GetProcessUser WinAPI_GetProcessWindowStation ' +
+        'WinAPI_GetProcessWorkingDirectory WinAPI_GetProfilesDirectory ' +
+        'WinAPI_GetPwrCapabilities WinAPI_GetRawInputBuffer ' +
+        'WinAPI_GetRawInputBufferLength WinAPI_GetRawInputData ' +
+        'WinAPI_GetRawInputDeviceInfo WinAPI_GetRegionData ' +
+        'WinAPI_GetRegisteredRawInputDevices ' +
+        'WinAPI_GetRegKeyNameByHandle WinAPI_GetRgnBox WinAPI_GetROP2 ' +
+        'WinAPI_GetRValue WinAPI_GetSaveFileName WinAPI_GetShellWindow ' +
+        'WinAPI_GetStartupInfo WinAPI_GetStdHandle ' +
+        'WinAPI_GetStockObject WinAPI_GetStretchBltMode ' +
+        'WinAPI_GetString WinAPI_GetSysColor WinAPI_GetSysColorBrush ' +
+        'WinAPI_GetSystemDefaultLangID WinAPI_GetSystemDefaultLCID ' +
+        'WinAPI_GetSystemDefaultUILanguage WinAPI_GetSystemDEPPolicy ' +
+        'WinAPI_GetSystemInfo WinAPI_GetSystemMetrics ' +
+        'WinAPI_GetSystemPowerStatus WinAPI_GetSystemTimes ' +
+        'WinAPI_GetSystemWow64Directory WinAPI_GetTabbedTextExtent ' +
+        'WinAPI_GetTempFileName WinAPI_GetTextAlign ' +
+        'WinAPI_GetTextCharacterExtra WinAPI_GetTextColor ' +
+        'WinAPI_GetTextExtentPoint32 WinAPI_GetTextFace ' +
+        'WinAPI_GetTextMetrics WinAPI_GetThemeAppProperties ' +
+        'WinAPI_GetThemeBackgroundContentRect ' +
+        'WinAPI_GetThemeBackgroundExtent WinAPI_GetThemeBackgroundRegion ' +
+        'WinAPI_GetThemeBitmap WinAPI_GetThemeBool ' +
+        'WinAPI_GetThemeColor WinAPI_GetThemeDocumentationProperty ' +
+        'WinAPI_GetThemeEnumValue WinAPI_GetThemeFilename ' +
+        'WinAPI_GetThemeFont WinAPI_GetThemeInt WinAPI_GetThemeMargins ' +
+        'WinAPI_GetThemeMetric WinAPI_GetThemePartSize ' +
+        'WinAPI_GetThemePosition WinAPI_GetThemePropertyOrigin ' +
+        'WinAPI_GetThemeRect WinAPI_GetThemeString ' +
+        'WinAPI_GetThemeSysBool WinAPI_GetThemeSysColor ' +
+        'WinAPI_GetThemeSysColorBrush WinAPI_GetThemeSysFont ' +
+        'WinAPI_GetThemeSysInt WinAPI_GetThemeSysSize ' +
+        'WinAPI_GetThemeSysString WinAPI_GetThemeTextExtent ' +
+        'WinAPI_GetThemeTextMetrics WinAPI_GetThemeTransitionDuration ' +
+        'WinAPI_GetThreadDesktop WinAPI_GetThreadErrorMode ' +
+        'WinAPI_GetThreadLocale WinAPI_GetThreadUILanguage ' +
+        'WinAPI_GetTickCount WinAPI_GetTickCount64 ' +
+        'WinAPI_GetTimeFormat WinAPI_GetTopWindow ' +
+        'WinAPI_GetUDFColorMode WinAPI_GetUpdateRect ' +
+        'WinAPI_GetUpdateRgn WinAPI_GetUserDefaultLangID ' +
+        'WinAPI_GetUserDefaultLCID WinAPI_GetUserDefaultUILanguage ' +
+        'WinAPI_GetUserGeoID WinAPI_GetUserObjectInformation ' +
+        'WinAPI_GetVersion WinAPI_GetVersionEx ' +
+        'WinAPI_GetVolumeInformation WinAPI_GetVolumeInformationByHandle ' +
+        'WinAPI_GetVolumeNameForVolumeMountPoint WinAPI_GetWindow ' +
+        'WinAPI_GetWindowDC WinAPI_GetWindowDisplayAffinity ' +
+        'WinAPI_GetWindowExt WinAPI_GetWindowFileName ' +
+        'WinAPI_GetWindowHeight WinAPI_GetWindowInfo ' +
+        'WinAPI_GetWindowLong WinAPI_GetWindowOrg ' +
+        'WinAPI_GetWindowPlacement WinAPI_GetWindowRect ' +
+        'WinAPI_GetWindowRgn WinAPI_GetWindowRgnBox ' +
+        'WinAPI_GetWindowSubclass WinAPI_GetWindowText ' +
+        'WinAPI_GetWindowTheme WinAPI_GetWindowThreadProcessId ' +
+        'WinAPI_GetWindowWidth WinAPI_GetWorkArea ' +
+        'WinAPI_GetWorldTransform WinAPI_GetXYFromPoint ' +
+        'WinAPI_GlobalMemoryStatus WinAPI_GradientFill ' +
+        'WinAPI_GUIDFromString WinAPI_GUIDFromStringEx WinAPI_HashData ' +
+        'WinAPI_HashString WinAPI_HiByte WinAPI_HideCaret ' +
+        'WinAPI_HiDWord WinAPI_HiWord WinAPI_InflateRect ' +
+        'WinAPI_InitMUILanguage WinAPI_InProcess ' +
+        'WinAPI_IntersectClipRect WinAPI_IntersectRect ' +
+        'WinAPI_IntToDWord WinAPI_IntToFloat WinAPI_InvalidateRect ' +
+        'WinAPI_InvalidateRgn WinAPI_InvertANDBitmap ' +
+        'WinAPI_InvertColor WinAPI_InvertRect WinAPI_InvertRgn ' +
+        'WinAPI_IOCTL WinAPI_IsAlphaBitmap WinAPI_IsBadCodePtr ' +
+        'WinAPI_IsBadReadPtr WinAPI_IsBadStringPtr ' +
+        'WinAPI_IsBadWritePtr WinAPI_IsChild WinAPI_IsClassName ' +
+        'WinAPI_IsDoorOpen WinAPI_IsElevated WinAPI_IsHungAppWindow ' +
+        'WinAPI_IsIconic WinAPI_IsInternetConnected ' +
+        'WinAPI_IsLoadKBLayout WinAPI_IsMemory ' +
+        'WinAPI_IsNameInExpression WinAPI_IsNetworkAlive ' +
+        'WinAPI_IsPathShared WinAPI_IsProcessInJob ' +
+        'WinAPI_IsProcessorFeaturePresent WinAPI_IsRectEmpty ' +
+        'WinAPI_IsThemeActive ' +
+        'WinAPI_IsThemeBackgroundPartiallyTransparent ' +
+        'WinAPI_IsThemePartDefined WinAPI_IsValidLocale ' +
+        'WinAPI_IsWindow WinAPI_IsWindowEnabled WinAPI_IsWindowUnicode ' +
+        'WinAPI_IsWindowVisible WinAPI_IsWow64Process ' +
+        'WinAPI_IsWritable WinAPI_IsZoomed WinAPI_Keybd_Event ' +
+        'WinAPI_KillTimer WinAPI_LineDDA WinAPI_LineTo ' +
+        'WinAPI_LoadBitmap WinAPI_LoadCursor WinAPI_LoadCursorFromFile ' +
+        'WinAPI_LoadIcon WinAPI_LoadIconMetric ' +
+        'WinAPI_LoadIconWithScaleDown WinAPI_LoadImage ' +
+        'WinAPI_LoadIndirectString WinAPI_LoadKeyboardLayout ' +
+        'WinAPI_LoadLibrary WinAPI_LoadLibraryEx WinAPI_LoadMedia ' +
+        'WinAPI_LoadResource WinAPI_LoadShell32Icon WinAPI_LoadString ' +
+        'WinAPI_LoadStringEx WinAPI_LoByte WinAPI_LocalFree ' +
+        'WinAPI_LockDevice WinAPI_LockFile WinAPI_LockResource ' +
+        'WinAPI_LockWindowUpdate WinAPI_LockWorkStation WinAPI_LoDWord ' +
+        'WinAPI_LongMid WinAPI_LookupIconIdFromDirectoryEx ' +
+        'WinAPI_LoWord WinAPI_LPtoDP WinAPI_MAKELANGID ' +
+        'WinAPI_MAKELCID WinAPI_MakeLong WinAPI_MakeQWord ' +
+        'WinAPI_MakeWord WinAPI_MapViewOfFile WinAPI_MapVirtualKey ' +
+        'WinAPI_MaskBlt WinAPI_MessageBeep WinAPI_MessageBoxCheck ' +
+        'WinAPI_MessageBoxIndirect WinAPI_MirrorIcon ' +
+        'WinAPI_ModifyWorldTransform WinAPI_MonitorFromPoint ' +
+        'WinAPI_MonitorFromRect WinAPI_MonitorFromWindow ' +
+        'WinAPI_Mouse_Event WinAPI_MoveFileEx WinAPI_MoveMemory ' +
+        'WinAPI_MoveTo WinAPI_MoveToEx WinAPI_MoveWindow ' +
+        'WinAPI_MsgBox WinAPI_MulDiv WinAPI_MultiByteToWideChar ' +
+        'WinAPI_MultiByteToWideCharEx WinAPI_NtStatusToDosError ' +
+        'WinAPI_OemToChar WinAPI_OffsetClipRgn WinAPI_OffsetPoints ' +
+        'WinAPI_OffsetRect WinAPI_OffsetRgn WinAPI_OffsetWindowOrg ' +
+        'WinAPI_OpenDesktop WinAPI_OpenFileById WinAPI_OpenFileDlg ' +
+        'WinAPI_OpenFileMapping WinAPI_OpenIcon ' +
+        'WinAPI_OpenInputDesktop WinAPI_OpenJobObject WinAPI_OpenMutex ' +
+        'WinAPI_OpenProcess WinAPI_OpenProcessToken ' +
+        'WinAPI_OpenSemaphore WinAPI_OpenThemeData ' +
+        'WinAPI_OpenWindowStation WinAPI_PageSetupDlg ' +
+        'WinAPI_PaintDesktop WinAPI_PaintRgn WinAPI_ParseURL ' +
+        'WinAPI_ParseUserName WinAPI_PatBlt WinAPI_PathAddBackslash ' +
+        'WinAPI_PathAddExtension WinAPI_PathAppend ' +
+        'WinAPI_PathBuildRoot WinAPI_PathCanonicalize ' +
+        'WinAPI_PathCommonPrefix WinAPI_PathCompactPath ' +
+        'WinAPI_PathCompactPathEx WinAPI_PathCreateFromUrl ' +
+        'WinAPI_PathFindExtension WinAPI_PathFindFileName ' +
+        'WinAPI_PathFindNextComponent WinAPI_PathFindOnPath ' +
+        'WinAPI_PathGetArgs WinAPI_PathGetCharType ' +
+        'WinAPI_PathGetDriveNumber WinAPI_PathIsContentType ' +
+        'WinAPI_PathIsDirectory WinAPI_PathIsDirectoryEmpty ' +
+        'WinAPI_PathIsExe WinAPI_PathIsFileSpec ' +
+        'WinAPI_PathIsLFNFileSpec WinAPI_PathIsRelative ' +
+        'WinAPI_PathIsRoot WinAPI_PathIsSameRoot ' +
+        'WinAPI_PathIsSystemFolder WinAPI_PathIsUNC ' +
+        'WinAPI_PathIsUNCServer WinAPI_PathIsUNCServerShare ' +
+        'WinAPI_PathMakeSystemFolder WinAPI_PathMatchSpec ' +
+        'WinAPI_PathParseIconLocation WinAPI_PathRelativePathTo ' +
+        'WinAPI_PathRemoveArgs WinAPI_PathRemoveBackslash ' +
+        'WinAPI_PathRemoveExtension WinAPI_PathRemoveFileSpec ' +
+        'WinAPI_PathRenameExtension WinAPI_PathSearchAndQualify ' +
+        'WinAPI_PathSkipRoot WinAPI_PathStripPath ' +
+        'WinAPI_PathStripToRoot WinAPI_PathToRegion ' +
+        'WinAPI_PathUndecorate WinAPI_PathUnExpandEnvStrings ' +
+        'WinAPI_PathUnmakeSystemFolder WinAPI_PathUnquoteSpaces ' +
+        'WinAPI_PathYetAnotherMakeUniqueName WinAPI_PickIconDlg ' +
+        'WinAPI_PlayEnhMetaFile WinAPI_PlaySound WinAPI_PlgBlt ' +
+        'WinAPI_PointFromRect WinAPI_PolyBezier WinAPI_PolyBezierTo ' +
+        'WinAPI_PolyDraw WinAPI_Polygon WinAPI_PostMessage ' +
+        'WinAPI_PrimaryLangId WinAPI_PrintDlg WinAPI_PrintDlgEx ' +
+        'WinAPI_PrintWindow WinAPI_ProgIDFromCLSID WinAPI_PtInRect ' +
+        'WinAPI_PtInRectEx WinAPI_PtInRegion WinAPI_PtVisible ' +
+        'WinAPI_QueryDosDevice WinAPI_QueryInformationJobObject ' +
+        'WinAPI_QueryPerformanceCounter WinAPI_QueryPerformanceFrequency ' +
+        'WinAPI_RadialGradientFill WinAPI_ReadDirectoryChanges ' +
+        'WinAPI_ReadFile WinAPI_ReadProcessMemory WinAPI_Rectangle ' +
+        'WinAPI_RectInRegion WinAPI_RectIsEmpty WinAPI_RectVisible ' +
+        'WinAPI_RedrawWindow WinAPI_RegCloseKey ' +
+        'WinAPI_RegConnectRegistry WinAPI_RegCopyTree ' +
+        'WinAPI_RegCopyTreeEx WinAPI_RegCreateKey ' +
+        'WinAPI_RegDeleteEmptyKey WinAPI_RegDeleteKey ' +
+        'WinAPI_RegDeleteKeyValue WinAPI_RegDeleteTree ' +
+        'WinAPI_RegDeleteTreeEx WinAPI_RegDeleteValue ' +
+        'WinAPI_RegDisableReflectionKey WinAPI_RegDuplicateHKey ' +
+        'WinAPI_RegEnableReflectionKey WinAPI_RegEnumKey ' +
+        'WinAPI_RegEnumValue WinAPI_RegFlushKey ' +
+        'WinAPI_RegisterApplicationRestart WinAPI_RegisterClass ' +
+        'WinAPI_RegisterClassEx WinAPI_RegisterHotKey ' +
+        'WinAPI_RegisterPowerSettingNotification ' +
+        'WinAPI_RegisterRawInputDevices WinAPI_RegisterShellHookWindow ' +
+        'WinAPI_RegisterWindowMessage WinAPI_RegLoadMUIString ' +
+        'WinAPI_RegNotifyChangeKeyValue WinAPI_RegOpenKey ' +
+        'WinAPI_RegQueryInfoKey WinAPI_RegQueryLastWriteTime ' +
+        'WinAPI_RegQueryMultipleValues WinAPI_RegQueryReflectionKey ' +
+        'WinAPI_RegQueryValue WinAPI_RegRestoreKey WinAPI_RegSaveKey ' +
+        'WinAPI_RegSetValue WinAPI_ReleaseCapture WinAPI_ReleaseDC ' +
+        'WinAPI_ReleaseMutex WinAPI_ReleaseSemaphore ' +
+        'WinAPI_ReleaseStream WinAPI_RemoveClipboardFormatListener ' +
+        'WinAPI_RemoveDirectory WinAPI_RemoveFontMemResourceEx ' +
+        'WinAPI_RemoveFontResourceEx WinAPI_RemoveWindowSubclass ' +
+        'WinAPI_ReOpenFile WinAPI_ReplaceFile WinAPI_ReplaceTextDlg ' +
+        'WinAPI_ResetEvent WinAPI_RestartDlg WinAPI_RestoreDC ' +
+        'WinAPI_RGB WinAPI_RotatePoints WinAPI_RoundRect ' +
+        'WinAPI_SaveDC WinAPI_SaveFileDlg WinAPI_SaveHBITMAPToFile ' +
+        'WinAPI_SaveHICONToFile WinAPI_ScaleWindowExt ' +
+        'WinAPI_ScreenToClient WinAPI_SearchPath WinAPI_SelectClipPath ' +
+        'WinAPI_SelectClipRgn WinAPI_SelectObject ' +
+        'WinAPI_SendMessageTimeout WinAPI_SetActiveWindow ' +
+        'WinAPI_SetArcDirection WinAPI_SetBitmapBits ' +
+        'WinAPI_SetBitmapDimensionEx WinAPI_SetBkColor ' +
+        'WinAPI_SetBkMode WinAPI_SetBoundsRect WinAPI_SetBrushOrg ' +
+        'WinAPI_SetCapture WinAPI_SetCaretBlinkTime WinAPI_SetCaretPos ' +
+        'WinAPI_SetClassLongEx WinAPI_SetColorAdjustment ' +
+        'WinAPI_SetCompression WinAPI_SetCurrentDirectory ' +
+        'WinAPI_SetCurrentProcessExplicitAppUserModelID WinAPI_SetCursor ' +
+        'WinAPI_SetDCBrushColor WinAPI_SetDCPenColor ' +
+        'WinAPI_SetDefaultPrinter WinAPI_SetDeviceGammaRamp ' +
+        'WinAPI_SetDIBColorTable WinAPI_SetDIBits ' +
+        'WinAPI_SetDIBitsToDevice WinAPI_SetDllDirectory ' +
+        'WinAPI_SetEndOfFile WinAPI_SetEnhMetaFileBits ' +
+        'WinAPI_SetErrorMode WinAPI_SetEvent WinAPI_SetFileAttributes ' +
+        'WinAPI_SetFileInformationByHandleEx WinAPI_SetFilePointer ' +
+        'WinAPI_SetFilePointerEx WinAPI_SetFileShortName ' +
+        'WinAPI_SetFileValidData WinAPI_SetFocus WinAPI_SetFont ' +
+        'WinAPI_SetForegroundWindow WinAPI_SetFRBuffer ' +
+        'WinAPI_SetGraphicsMode WinAPI_SetHandleInformation ' +
+        'WinAPI_SetInformationJobObject WinAPI_SetKeyboardLayout ' +
+        'WinAPI_SetKeyboardState WinAPI_SetLastError ' +
+        'WinAPI_SetLayeredWindowAttributes WinAPI_SetLocaleInfo ' +
+        'WinAPI_SetMapMode WinAPI_SetMessageExtraInfo WinAPI_SetParent ' +
+        'WinAPI_SetPixel WinAPI_SetPolyFillMode ' +
+        'WinAPI_SetPriorityClass WinAPI_SetProcessAffinityMask ' +
+        'WinAPI_SetProcessShutdownParameters ' +
+        'WinAPI_SetProcessWindowStation WinAPI_SetRectRgn ' +
+        'WinAPI_SetROP2 WinAPI_SetSearchPathMode ' +
+        'WinAPI_SetStretchBltMode WinAPI_SetSysColors ' +
+        'WinAPI_SetSystemCursor WinAPI_SetTextAlign ' +
+        'WinAPI_SetTextCharacterExtra WinAPI_SetTextColor ' +
+        'WinAPI_SetTextJustification WinAPI_SetThemeAppProperties ' +
+        'WinAPI_SetThreadDesktop WinAPI_SetThreadErrorMode ' +
+        'WinAPI_SetThreadExecutionState WinAPI_SetThreadLocale ' +
+        'WinAPI_SetThreadUILanguage WinAPI_SetTimer ' +
+        'WinAPI_SetUDFColorMode WinAPI_SetUserGeoID ' +
+        'WinAPI_SetUserObjectInformation WinAPI_SetVolumeMountPoint ' +
+        'WinAPI_SetWindowDisplayAffinity WinAPI_SetWindowExt ' +
+        'WinAPI_SetWindowLong WinAPI_SetWindowOrg ' +
+        'WinAPI_SetWindowPlacement WinAPI_SetWindowPos ' +
+        'WinAPI_SetWindowRgn WinAPI_SetWindowsHookEx ' +
+        'WinAPI_SetWindowSubclass WinAPI_SetWindowText ' +
+        'WinAPI_SetWindowTheme WinAPI_SetWinEventHook ' +
+        'WinAPI_SetWorldTransform WinAPI_SfcIsFileProtected ' +
+        'WinAPI_SfcIsKeyProtected WinAPI_ShellAboutDlg ' +
+        'WinAPI_ShellAddToRecentDocs WinAPI_ShellChangeNotify ' +
+        'WinAPI_ShellChangeNotifyDeregister ' +
+        'WinAPI_ShellChangeNotifyRegister WinAPI_ShellCreateDirectory ' +
+        'WinAPI_ShellEmptyRecycleBin WinAPI_ShellExecute ' +
+        'WinAPI_ShellExecuteEx WinAPI_ShellExtractAssociatedIcon ' +
+        'WinAPI_ShellExtractIcon WinAPI_ShellFileOperation ' +
+        'WinAPI_ShellFlushSFCache WinAPI_ShellGetFileInfo ' +
+        'WinAPI_ShellGetIconOverlayIndex WinAPI_ShellGetImageList ' +
+        'WinAPI_ShellGetKnownFolderIDList WinAPI_ShellGetKnownFolderPath ' +
+        'WinAPI_ShellGetLocalizedName WinAPI_ShellGetPathFromIDList ' +
+        'WinAPI_ShellGetSetFolderCustomSettings WinAPI_ShellGetSettings ' +
+        'WinAPI_ShellGetSpecialFolderLocation ' +
+        'WinAPI_ShellGetSpecialFolderPath WinAPI_ShellGetStockIconInfo ' +
+        'WinAPI_ShellILCreateFromPath WinAPI_ShellNotifyIcon ' +
+        'WinAPI_ShellNotifyIconGetRect WinAPI_ShellObjectProperties ' +
+        'WinAPI_ShellOpenFolderAndSelectItems WinAPI_ShellOpenWithDlg ' +
+        'WinAPI_ShellQueryRecycleBin ' +
+        'WinAPI_ShellQueryUserNotificationState ' +
+        'WinAPI_ShellRemoveLocalizedName WinAPI_ShellRestricted ' +
+        'WinAPI_ShellSetKnownFolderPath WinAPI_ShellSetLocalizedName ' +
+        'WinAPI_ShellSetSettings WinAPI_ShellStartNetConnectionDlg ' +
+        'WinAPI_ShellUpdateImage WinAPI_ShellUserAuthenticationDlg ' +
+        'WinAPI_ShellUserAuthenticationDlgEx WinAPI_ShortToWord ' +
+        'WinAPI_ShowCaret WinAPI_ShowCursor WinAPI_ShowError ' +
+        'WinAPI_ShowLastError WinAPI_ShowMsg WinAPI_ShowOwnedPopups ' +
+        'WinAPI_ShowWindow WinAPI_ShutdownBlockReasonCreate ' +
+        'WinAPI_ShutdownBlockReasonDestroy ' +
+        'WinAPI_ShutdownBlockReasonQuery WinAPI_SizeOfResource ' +
+        'WinAPI_StretchBlt WinAPI_StretchDIBits ' +
+        'WinAPI_StrFormatByteSize WinAPI_StrFormatByteSizeEx ' +
+        'WinAPI_StrFormatKBSize WinAPI_StrFromTimeInterval ' +
+        'WinAPI_StringFromGUID WinAPI_StringLenA WinAPI_StringLenW ' +
+        'WinAPI_StrLen WinAPI_StrokeAndFillPath WinAPI_StrokePath ' +
+        'WinAPI_StructToArray WinAPI_SubLangId WinAPI_SubtractRect ' +
+        'WinAPI_SwapDWord WinAPI_SwapQWord WinAPI_SwapWord ' +
+        'WinAPI_SwitchColor WinAPI_SwitchDesktop ' +
+        'WinAPI_SwitchToThisWindow WinAPI_SystemParametersInfo ' +
+        'WinAPI_TabbedTextOut WinAPI_TerminateJobObject ' +
+        'WinAPI_TerminateProcess WinAPI_TextOut WinAPI_TileWindows ' +
+        'WinAPI_TrackMouseEvent WinAPI_TransparentBlt ' +
+        'WinAPI_TwipsPerPixelX WinAPI_TwipsPerPixelY ' +
+        'WinAPI_UnhookWindowsHookEx WinAPI_UnhookWinEvent ' +
+        'WinAPI_UnionRect WinAPI_UnionStruct WinAPI_UniqueHardwareID ' +
+        'WinAPI_UnloadKeyboardLayout WinAPI_UnlockFile ' +
+        'WinAPI_UnmapViewOfFile WinAPI_UnregisterApplicationRestart ' +
+        'WinAPI_UnregisterClass WinAPI_UnregisterHotKey ' +
+        'WinAPI_UnregisterPowerSettingNotification ' +
+        'WinAPI_UpdateLayeredWindow WinAPI_UpdateLayeredWindowEx ' +
+        'WinAPI_UpdateLayeredWindowIndirect WinAPI_UpdateResource ' +
+        'WinAPI_UpdateWindow WinAPI_UrlApplyScheme ' +
+        'WinAPI_UrlCanonicalize WinAPI_UrlCombine WinAPI_UrlCompare ' +
+        'WinAPI_UrlCreateFromPath WinAPI_UrlFixup WinAPI_UrlGetPart ' +
+        'WinAPI_UrlHash WinAPI_UrlIs WinAPI_UserHandleGrantAccess ' +
+        'WinAPI_ValidateRect WinAPI_ValidateRgn WinAPI_VerQueryRoot ' +
+        'WinAPI_VerQueryValue WinAPI_VerQueryValueEx ' +
+        'WinAPI_WaitForInputIdle WinAPI_WaitForMultipleObjects ' +
+        'WinAPI_WaitForSingleObject WinAPI_WideCharToMultiByte ' +
+        'WinAPI_WidenPath WinAPI_WindowFromDC WinAPI_WindowFromPoint ' +
+        'WinAPI_WordToShort WinAPI_Wow64EnableWow64FsRedirection ' +
+        'WinAPI_WriteConsole WinAPI_WriteFile ' +
+        'WinAPI_WriteProcessMemory WinAPI_ZeroMemory ' +
+        'WinNet_AddConnection WinNet_AddConnection2 ' +
+        'WinNet_AddConnection3 WinNet_CancelConnection ' +
+        'WinNet_CancelConnection2 WinNet_CloseEnum ' +
+        'WinNet_ConnectionDialog WinNet_ConnectionDialog1 ' +
+        'WinNet_DisconnectDialog WinNet_DisconnectDialog1 ' +
+        'WinNet_EnumResource WinNet_GetConnection ' +
+        'WinNet_GetConnectionPerformance WinNet_GetLastError ' +
+        'WinNet_GetNetworkInformation WinNet_GetProviderName ' +
+        'WinNet_GetResourceInformation WinNet_GetResourceParent ' +
+        'WinNet_GetUniversalName WinNet_GetUser WinNet_OpenEnum ' +
+        'WinNet_RestoreConnection WinNet_UseConnection Word_Create ' +
+        'Word_DocAdd Word_DocAttach Word_DocClose Word_DocExport ' +
+        'Word_DocFind Word_DocFindReplace Word_DocGet ' +
+        'Word_DocLinkAdd Word_DocLinkGet Word_DocOpen ' +
+        'Word_DocPictureAdd Word_DocPrint Word_DocRangeSet ' +
+        'Word_DocSave Word_DocSaveAs Word_DocTableRead ' +
+        'Word_DocTableWrite Word_Quit',
+
+        COMMENT = {
+            variants: [
+              hljs.COMMENT(';', '$', {relevance: 0}),
+              hljs.COMMENT('#cs', '#ce'),
+              hljs.COMMENT('#comments-start', '#comments-end')
+            ]
+        },
+
+        VARIABLE = {
+            className: 'variable',
+            begin: '\\$[A-z0-9_]+'
+        },
+
+        STRING = {
+            className: 'string',
+            variants: [{
+                begin: /"/,
+                end: /"/,
+                contains: [{
+                    begin: /""/,
+                    relevance: 0
+                }]
+            }, {
+                begin: /'/,
+                end: /'/,
+                contains: [{
+                    begin: /''/,
+                    relevance: 0
+                }]
+            }]
+        },
+
+        NUMBER = {
+            variants: [hljs.BINARY_NUMBER_MODE, hljs.C_NUMBER_MODE]
+        },
+
+        PREPROCESSOR = {
+            className: 'preprocessor',
+            begin: '#',
+            end: '$',
+            keywords: 'include include-once NoTrayIcon OnAutoItStartRegister RequireAdmin pragma ' +
+                'Au3Stripper_Ignore_Funcs Au3Stripper_Ignore_Variables ' +
+                'Au3Stripper_Off Au3Stripper_On Au3Stripper_Parameters ' +
+                'AutoIt3Wrapper_Add_Constants AutoIt3Wrapper_Au3Check_Parameters ' +
+                'AutoIt3Wrapper_Au3Check_Stop_OnWarning AutoIt3Wrapper_Aut2Exe ' +
+                'AutoIt3Wrapper_AutoIt3 AutoIt3Wrapper_AutoIt3Dir ' +
+                'AutoIt3Wrapper_Change2CUI AutoIt3Wrapper_Compile_Both ' +
+                'AutoIt3Wrapper_Compression AutoIt3Wrapper_EndIf ' +
+                'AutoIt3Wrapper_Icon AutoIt3Wrapper_If_Compile ' +
+                'AutoIt3Wrapper_If_Run AutoIt3Wrapper_Jump_To_First_Error ' +
+                'AutoIt3Wrapper_OutFile AutoIt3Wrapper_OutFile_Type ' +
+                'AutoIt3Wrapper_OutFile_X64 AutoIt3Wrapper_PlugIn_Funcs ' +
+                'AutoIt3Wrapper_Res_Comment Autoit3Wrapper_Res_Compatibility ' +
+                'AutoIt3Wrapper_Res_Description AutoIt3Wrapper_Res_Field ' +
+                'AutoIt3Wrapper_Res_File_Add AutoIt3Wrapper_Res_FileVersion ' +
+                'AutoIt3Wrapper_Res_FileVersion_AutoIncrement ' +
+                'AutoIt3Wrapper_Res_Icon_Add AutoIt3Wrapper_Res_Language ' +
+                'AutoIt3Wrapper_Res_LegalCopyright ' +
+                'AutoIt3Wrapper_Res_ProductVersion ' +
+                'AutoIt3Wrapper_Res_requestedExecutionLevel ' +
+                'AutoIt3Wrapper_Res_SaveSource AutoIt3Wrapper_Run_After ' +
+                'AutoIt3Wrapper_Run_Au3Check AutoIt3Wrapper_Run_Au3Stripper ' +
+                'AutoIt3Wrapper_Run_Before AutoIt3Wrapper_Run_Debug_Mode ' +
+                'AutoIt3Wrapper_Run_SciTE_Minimized ' +
+                'AutoIt3Wrapper_Run_SciTE_OutputPane_Minimized ' +
+                'AutoIt3Wrapper_Run_Tidy AutoIt3Wrapper_ShowProgress ' +
+                'AutoIt3Wrapper_Testing AutoIt3Wrapper_Tidy_Stop_OnError ' +
+                'AutoIt3Wrapper_UPX_Parameters AutoIt3Wrapper_UseUPX ' +
+                'AutoIt3Wrapper_UseX64 AutoIt3Wrapper_Version ' +
+                'AutoIt3Wrapper_Versioning AutoIt3Wrapper_Versioning_Parameters ' +
+                'Tidy_Off Tidy_On Tidy_Parameters EndRegion Region',
+            contains: [{
+                    begin: /\\\n/,
+                    relevance: 0
+                }, {
+                    beginKeywords: 'include',
+                    end: '$',
+                    contains: [
+                        STRING, {
+                            className: 'string',
+                            variants: [{
+                                begin: '<',
+                                end: '>'
+                            }, {
+                                begin: /"/,
+                                end: /"/,
+                                contains: [{
+                                    begin: /""/,
+                                    relevance: 0
+                                }]
+                            }, {
+                                begin: /'/,
+                                end: /'/,
+                                contains: [{
+                                    begin: /''/,
+                                    relevance: 0
+                                }]
+                            }]
+                        }
+                    ]
+                },
+                STRING,
+                COMMENT
+            ]
+        },
+
+        CONSTANT = {
+            className: 'constant',
+            // begin: '@',
+            // end: '$',
+            // keywords: 'AppDataCommonDir AppDataDir AutoItExe AutoItPID AutoItVersion AutoItX64 COM_EventObj CommonFilesDir Compiled ComputerName ComSpec CPUArch CR CRLF DesktopCommonDir DesktopDepth DesktopDir DesktopHeight DesktopRefresh DesktopWidth DocumentsCommonDir error exitCode exitMethod extended FavoritesCommonDir FavoritesDir GUI_CtrlHandle GUI_CtrlId GUI_DragFile GUI_DragId GUI_DropId GUI_WinHandle HomeDrive HomePath HomeShare HotKeyPressed HOUR IPAddress1 IPAddress2 IPAddress3 IPAddress4 KBLayout LF LocalAppDataDir LogonDNSDomain LogonDomain LogonServer MDAY MIN MON MSEC MUILang MyDocumentsDir NumParams OSArch OSBuild OSLang OSServicePack OSType OSVersion ProgramFilesDir ProgramsCommonDir ProgramsDir ScriptDir ScriptFullPath ScriptLineNumber ScriptName SEC StartMenuCommonDir StartMenuDir StartupCommonDir StartupDir SW_DISABLE SW_ENABLE SW_HIDE SW_LOCK SW_MAXIMIZE SW_MINIMIZE SW_RESTORE SW_SHOW SW_SHOWDEFAULT SW_SHOWMAXIMIZED SW_SHOWMINIMIZED SW_SHOWMINNOACTIVE SW_SHOWNA SW_SHOWNOACTIVATE SW_SHOWNORMAL SW_UNLOCK SystemDir TAB TempDir TRAY_ID TrayIconFlashing TrayIconVisible UserName UserProfileDir WDAY WindowsDir WorkingDir YDAY YEAR',
+            // relevance: 5
+            begin: '@[A-z0-9_]+'
+        },
+
+        FUNCTION = {
+            className: 'function',
+            beginKeywords: 'Func',
+            end: '$',
+            excludeEnd: true,
+            illegal: '\\$|\\[|%',
+            contains: [
+                hljs.UNDERSCORE_TITLE_MODE, {
+                    className: 'params',
+                    begin: '\\(',
+                    end: '\\)',
+                    contains: [
+                        VARIABLE,
+                        STRING,
+                        NUMBER
+                    ]
+                }
+            ]
+        };
+
+    return {
+        case_insensitive: true,
+        illegal: /\/\*/,
+        keywords: {
+            keyword: KEYWORDS,
+            built_in: BUILT_IN,
+            literal: LITERAL
+        },
+        contains: [
+            COMMENT,
+            VARIABLE,
+            STRING,
+            NUMBER,
+            PREPROCESSOR,
+            CONSTANT,
+            FUNCTION
+        ]
+    }
+};
+},{}],13:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     case_insensitive: true,
@@ -1383,7 +3528,13 @@ module.exports = function(hljs) {
     },
     contains: [
       hljs.C_BLOCK_COMMENT_MODE,
-      {className: 'comment', begin: ';',  end: '$', relevance: 0},
+      hljs.COMMENT(
+        ';',
+        '$',
+        {
+          relevance: 0
+        }
+      ),
       hljs.C_NUMBER_MODE, // 0x..., decimal, float
       hljs.BINARY_NUMBER_MODE, // 0b...
       {
@@ -1405,7 +3556,7 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],10:[function(require,module,exports){
+},{}],14:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     keywords: 'false int abstract private char boolean static null if for true ' +
@@ -1436,13 +3587,13 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],11:[function(require,module,exports){
+},{}],15:[function(require,module,exports){
 module.exports = function(hljs) {
   var VAR = {
     className: 'variable',
     variants: [
       {begin: /\$[\w\d#@][\w\d_]*/},
-      {begin: /\$\{(.*?)\}/}
+      {begin: /\$\{(.*?)}/}
     ]
   };
   var QUOTE_STRING = {
@@ -1468,13 +3619,26 @@ module.exports = function(hljs) {
     lexemes: /-?[a-z\.]+/,
     keywords: {
       keyword:
-        'if then else elif fi for break continue while in do done exit return set '+
-        'declare case esac export exec',
+        'if then else elif fi for while in do done case esac function',
       literal:
         'true false',
       built_in:
-        'printf echo read cd pwd pushd popd dirs let eval unset typeset readonly '+
-        'getopts source shopt caller type hash bind help sudo',
+        // Shell built-ins
+        // http://www.gnu.org/software/bash/manual/html_node/Shell-Builtin-Commands.html
+        'break cd continue eval exec exit export getopts hash pwd readonly return shift test times ' +
+        'trap umask unset ' +
+        // Bash built-ins
+        'alias bind builtin caller command declare echo enable help let local logout mapfile printf ' +
+        'read readarray source type typeset ulimit unalias ' +
+        // Shell modifiers
+        'set shopt ' +
+        // Zsh built-ins
+        'autoload bg bindkey bye cap chdir clone comparguments compcall compctl compdescribe compfiles ' +
+        'compgroups compquote comptags comptry compvalues dirs disable disown echotc echoti emulate ' +
+        'fc fg float functions getcap getln history integer jobs kill limit log noglob popd print ' +
+        'pushd pushln rehash sched setcap setopt stat suspend ttyctl unfunction unhash unlimit ' +
+        'unsetopt vared wait whence where which zcompile zformat zftp zle zmodload zparseopts zprof ' +
+        'zpty zregexparse zsocket zstyle ztcp',
       operator:
         '-ne -eq -lt -gt -f -d -e -s -l -a' // relevance booster
     },
@@ -1499,7 +3663,7 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],12:[function(require,module,exports){
+},{}],16:[function(require,module,exports){
 module.exports = function(hljs){
   var LITERAL = {
     className: 'literal',
@@ -1509,13 +3673,14 @@ module.exports = function(hljs){
   return {
     aliases: ['bf'],
     contains: [
-      {
-        className: 'comment',
-        begin: '[^\\[\\]\\.,\\+\\-<> \r\n]',
-        returnEnd: true,
-        end: '[\\[\\]\\.,\\+\\-<> \r\n]',
-        relevance: 0
-      },
+      hljs.COMMENT(
+        '[^\\[\\]\\.,\\+\\-<> \r\n]',
+        '[\\[\\]\\.,\\+\\-<> \r\n]',
+        {
+          returnEnd: true,
+          relevance: 0
+        }
+      ),
       {
         className: 'title',
         begin: '[\\[\\]]',
@@ -1535,7 +3700,87 @@ module.exports = function(hljs){
     ]
   };
 };
-},{}],13:[function(require,module,exports){
+},{}],17:[function(require,module,exports){
+module.exports = function(hljs) {
+  var KEYWORDS =
+    'div mod in and or not xor asserterror begin case do downto else end exit for if of repeat then to ' +
+    'until while with var';
+  var LITERALS = 'false true';
+  var COMMENT_MODES = [
+    hljs.C_LINE_COMMENT_MODE,
+    hljs.COMMENT(
+      /\{/,
+      /\}/,
+      {
+        relevance: 0
+      }
+    ),
+    hljs.COMMENT(
+      /\(\*/,
+      /\*\)/,
+      {
+        relevance: 10
+      }
+    )
+  ];
+  var STRING = {
+    className: 'string',
+    begin: /'/, end: /'/,
+    contains: [{begin: /''/}]
+  };
+  var CHAR_STRING = {
+    className: 'string', begin: /(#\d+)+/
+  };
+  var DATE = {
+      className: 'date',
+      begin: '\\b\\d+(\\.\\d+)?(DT|D|T)',
+      relevance: 0
+  };
+  var DBL_QUOTED_VARIABLE = {
+      className: 'variable',
+      begin: '"',
+      end: '"'
+  };
+
+  var PROCEDURE = {
+    className: 'function',
+    beginKeywords: 'procedure', end: /[:;]/,
+    keywords: 'procedure|10',
+    contains: [
+      hljs.TITLE_MODE,
+      {
+        className: 'params',
+        begin: /\(/, end: /\)/,
+        keywords: KEYWORDS,
+        contains: [STRING, CHAR_STRING]
+      }
+    ].concat(COMMENT_MODES)
+  };
+
+  var OBJECT = {
+    className: 'class',
+    begin: 'OBJECT (Table|Form|Report|Dataport|Codeunit|XMLport|MenuSuite|Page|Query) (\\d+) ([^\\r\\n]+)',
+    returnBegin: true,
+    contains: [
+      hljs.TITLE_MODE,
+        PROCEDURE
+    ]
+  };
+
+  return {
+    case_insensitive: true,
+    keywords: { keyword: KEYWORDS, literal: LITERALS },
+    illegal: /\/\*/,
+    contains: [
+      STRING, CHAR_STRING,
+      DATE, DBL_QUOTED_VARIABLE,
+      hljs.NUMBER_MODE,
+      OBJECT,
+      PROCEDURE
+    ]
+  };
+};
+},{}],18:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     aliases: ['capnp'],
@@ -1584,12 +3829,95 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],14:[function(require,module,exports){
+},{}],19:[function(require,module,exports){
+module.exports = function(hljs) {
+  // 2.3. Identifiers and keywords
+  var KEYWORDS =
+    'assembly module package import alias class interface object given value ' +
+    'assign void function new of extends satisfies abstracts in out return ' +
+    'break continue throw assert dynamic if else switch case for while try ' +
+    'catch finally then let this outer super is exists nonempty';
+  // 7.4.1 Declaration Modifiers
+  var DECLARATION_MODIFIERS =
+    'shared abstract formal default actual variable late native deprecated' +
+    'final sealed annotation suppressWarnings small';
+  // 7.4.2 Documentation
+  var DOCUMENTATION =
+    'doc by license see throws tagged';
+  var LANGUAGE_ANNOTATIONS = DECLARATION_MODIFIERS + ' ' + DOCUMENTATION;
+  var SUBST = {
+    className: 'subst', excludeBegin: true, excludeEnd: true,
+    begin: /``/, end: /``/,
+    keywords: KEYWORDS,
+    relevance: 10
+  };
+  var EXPRESSIONS = [
+    {
+      // verbatim string
+      className: 'string',
+      begin: '"""',
+      end: '"""',
+      relevance: 10
+    },
+    {
+      // string literal or template
+      className: 'string',
+      begin: '"', end: '"',
+      contains: [SUBST]
+    },
+    {
+      // character literal
+      className: 'string',
+      begin: "'",
+      end: "'"
+    },
+    {
+      // numeric literal
+      className: 'number',
+      begin: '#[0-9a-fA-F_]+|\\$[01_]+|[0-9_]+(?:\\.[0-9_](?:[eE][+-]?\\d+)?)?[kMGTPmunpf]?',
+      relevance: 0
+    }
+  ];
+  SUBST.contains = EXPRESSIONS;
+
+  return {
+    keywords: {
+      keyword: KEYWORDS,
+      annotation: LANGUAGE_ANNOTATIONS
+    },
+    illegal: '\\$[^01]|#[^0-9a-fA-F]',
+    contains: [
+      hljs.C_LINE_COMMENT_MODE,
+      hljs.COMMENT('/\\*', '\\*/', {contains: ['self']}),
+      {
+        // compiler annotation
+        className: 'annotation',
+        begin: '@[a-z]\\w*(?:\\:\"[^\"]*\")?'
+      }
+    ].concat(EXPRESSIONS)
+  };
+};
+},{}],20:[function(require,module,exports){
+module.exports = function(hljs) {
+  return {
+    contains: [
+      {
+        className: 'prompt',
+        begin: /^([\w.-]+|\s*#_)=>/,
+        starts: {
+          end: /$/,
+          subLanguage: 'clojure'
+        }
+      }
+    ]
+  }
+};
+},{}],21:[function(require,module,exports){
 module.exports = function(hljs) {
   var keywords = {
     built_in:
       // Clojure keywords
-      'def cond apply if-not if-let if not not= = < > <= >= == + / * - rem '+
+      'def defonce cond apply if-not if-let if not not= = < > <= >= == + / * - rem '+
       'quot neg? pos? delay? symbol? keyword? true? false? integer? empty? coll? list? '+
       'set? ifn? fn? associative? sequential? sorted? counted? reversible? number? decimal? '+
       'class? distinct? isa? float? rational? reduced? ratio? odd? even? char? seq? vector? '+
@@ -1618,18 +3946,29 @@ module.exports = function(hljs) {
       'lazy-seq spread list* str find-keyword keyword symbol gensym force rationalize'
    };
 
-  var CLJ_IDENT_RE = '[a-zA-Z_0-9\\!\\.\\?\\-\\+\\*\\/\\<\\=\\>\\&\\#\\$\';]+';
-  var SIMPLE_NUMBER_RE = '[\\s:\\(\\{]+\\d+(\\.\\d+)?';
+  var SYMBOLSTART = 'a-zA-Z_\\-!.?+*=<>&#\'';
+  var SYMBOL_RE = '[' + SYMBOLSTART + '][' + SYMBOLSTART + '0-9/;:]*';
+  var SIMPLE_NUMBER_RE = '[-+]?\\d+(\\.\\d+)?';
 
+  var SYMBOL = {
+    begin: SYMBOL_RE,
+    relevance: 0
+  };
   var NUMBER = {
     className: 'number', begin: SIMPLE_NUMBER_RE,
     relevance: 0
   };
   var STRING = hljs.inherit(hljs.QUOTE_STRING_MODE, {illegal: null});
-  var COMMENT = {
-    className: 'comment',
-    begin: ';', end: '$',
-    relevance: 0
+  var COMMENT = hljs.COMMENT(
+    ';',
+    '$',
+    {
+      relevance: 0
+    }
+  );
+  var LITERAL = {
+    className: 'literal',
+    begin: /\b(true|false|nil)\b/
   };
   var COLLECTION = {
     className: 'collection',
@@ -1637,16 +3976,12 @@ module.exports = function(hljs) {
   };
   var HINT = {
     className: 'comment',
-    begin: '\\^' + CLJ_IDENT_RE
+    begin: '\\^' + SYMBOL_RE
   };
-  var HINT_COL = {
-    className: 'comment',
-    begin: '\\^\\{', end: '\\}'
-
-  };
+  var HINT_COL = hljs.COMMENT('\\^\\{', '\\}');
   var KEY = {
     className: 'attribute',
-    begin: '[:]' + CLJ_IDENT_RE
+    begin: '[:]' + SYMBOL_RE
   };
   var LIST = {
     className: 'list',
@@ -1654,35 +3989,27 @@ module.exports = function(hljs) {
   };
   var BODY = {
     endsWithParent: true,
-    keywords: {literal: 'true false nil'},
     relevance: 0
   };
   var NAME = {
     keywords: keywords,
-    lexemes: CLJ_IDENT_RE,
-    className: 'keyword', begin: CLJ_IDENT_RE,
+    lexemes: SYMBOL_RE,
+    className: 'keyword', begin: SYMBOL_RE,
     starts: BODY
   };
+  var DEFAULT_CONTAINS = [LIST, STRING, HINT, HINT_COL, COMMENT, KEY, COLLECTION, NUMBER, LITERAL, SYMBOL];
 
-  LIST.contains = [{className: 'comment', begin: 'comment'}, NAME, BODY];
-  BODY.contains = [LIST, STRING, HINT, HINT_COL, COMMENT, KEY, COLLECTION, NUMBER];
-  COLLECTION.contains = [LIST, STRING, HINT, COMMENT, KEY, COLLECTION, NUMBER];
+  LIST.contains = [hljs.COMMENT('comment', ''), NAME, BODY];
+  BODY.contains = DEFAULT_CONTAINS;
+  COLLECTION.contains = DEFAULT_CONTAINS;
 
   return {
     aliases: ['clj'],
     illegal: /\S/,
-    contains: [
-      COMMENT,
-      LIST,
-      {
-        className: 'prompt',
-        begin: /^=> /,
-        starts: {end: /\n\n|\Z/} // eat up prompt output to not interfere with the illegal
-      }
-    ]
+    contains: [LIST, STRING, HINT, HINT_COL, COMMENT, KEY, COLLECTION, NUMBER, LITERAL]
   }
 };
-},{}],15:[function(require,module,exports){
+},{}],22:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     aliases: ['cmake.in'],
@@ -1721,7 +4048,7 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],16:[function(require,module,exports){
+},{}],23:[function(require,module,exports){
 module.exports = function(hljs) {
   var KEYWORDS = {
     keyword:
@@ -1735,14 +4062,10 @@ module.exports = function(hljs) {
       'true false null undefined ' +
       // Coffee literals
       'yes no on off',
-    reserved:
-      'case default function var void with const let enum export import native ' +
-      '__hasProp __extends __slice __bind __indexOf',
     built_in:
       'npm require console print module global window document'
   };
   var JS_IDENT_RE = '[A-Za-z$_][0-9A-Za-z$_]*';
-  var TITLE = hljs.inherit(hljs.TITLE_MODE, {begin: JS_IDENT_RE});
   var SUBST = {
     className: 'subst',
     begin: /#\{/, end: /}/,
@@ -1802,32 +4125,43 @@ module.exports = function(hljs) {
   ];
   SUBST.contains = EXPRESSIONS;
 
+  var TITLE = hljs.inherit(hljs.TITLE_MODE, {begin: JS_IDENT_RE});
+  var PARAMS_RE = '(\\(.*\\))?\\s*\\B[-=]>';
+  var PARAMS = {
+    className: 'params',
+    begin: '\\([^\\(]', returnBegin: true,
+    /* We need another contained nameless mode to not have every nested
+    pair of parens to be called "params" */
+    contains: [{
+      begin: /\(/, end: /\)/,
+      keywords: KEYWORDS,
+      contains: ['self'].concat(EXPRESSIONS)
+    }]
+  };
+
   return {
     aliases: ['coffee', 'cson', 'iced'],
     keywords: KEYWORDS,
     illegal: /\/\*/,
     contains: EXPRESSIONS.concat([
-      {
-        className: 'comment',
-        begin: '###', end: '###'
-      },
+      hljs.COMMENT('###', '###'),
       hljs.HASH_COMMENT_MODE,
       {
         className: 'function',
-        begin: '(^\\s*|\\B)(' + JS_IDENT_RE + '\\s*=\\s*)?(\\(.*\\))?\\s*\\B[-=]>', end: '[-=]>',
+        begin: '^\\s*' + JS_IDENT_RE + '\\s*=\\s*' + PARAMS_RE, end: '[-=]>',
         returnBegin: true,
+        contains: [TITLE, PARAMS]
+      },
+      {
+        // anonymous function start
+        begin: /[:\(,=]\s*/,
+        relevance: 0,
         contains: [
-          TITLE,
           {
-            className: 'params',
-            begin: '\\([^\\(]', returnBegin: true,
-            /* We need another contained nameless mode to not have every nested
-            pair of parens to be called "params" */
-            contains: [{
-              begin: /\(/, end: /\)/,
-              keywords: KEYWORDS,
-              contains: ['self'].concat(EXPRESSIONS)
-            }]
+            className: 'function',
+            begin: PARAMS_RE, end: '[-=]>',
+            returnBegin: true,
+            contains: [PARAMS]
           }
         ]
       },
@@ -1849,85 +4183,453 @@ module.exports = function(hljs) {
       {
         className: 'attribute',
         begin: JS_IDENT_RE + ':', end: ':',
-        returnBegin: true, excludeEnd: true,
+        returnBegin: true, returnEnd: true,
         relevance: 0
       }
     ])
   };
 };
-},{}],17:[function(require,module,exports){
+},{}],24:[function(require,module,exports){
 module.exports = function(hljs) {
+  var CPP_PRIMATIVE_TYPES = {
+    className: 'keyword',
+    begin: '\\b[a-z\\d_]*_t\\b'
+  };
+
+  var STRINGS = {
+    className: 'string',
+    variants: [
+      hljs.inherit(hljs.QUOTE_STRING_MODE, { begin: '((u8?|U)|L)?"' }),
+      {
+        begin: '(u8?|U)?R"', end: '"',
+        contains: [hljs.BACKSLASH_ESCAPE]
+      },
+      {
+        begin: '\'\\\\?.', end: '\'',
+        illegal: '.'
+      }
+    ]
+  };
+
+  var NUMBERS = {
+    className: 'number',
+    variants: [
+      { begin: '\\b(\\d+(\\.\\d*)?|\\.\\d+)(u|U|l|L|ul|UL|f|F)' },
+      { begin: hljs.C_NUMBER_RE }
+    ]
+  };
+
+  var PREPROCESSOR =       {
+    className: 'preprocessor',
+    begin: '#', end: '$',
+    keywords: 'if else elif endif define undef warning error line ' +
+              'pragma ifdef ifndef',
+    contains: [
+      {
+        begin: /\\\n/, relevance: 0
+      },
+      {
+        beginKeywords: 'include', end: '$',
+        contains: [
+          STRINGS,
+          {
+            className: 'string',
+            begin: '<', end: '>',
+            illegal: '\\n',
+          }
+        ]
+      },
+      STRINGS,
+      NUMBERS,
+      hljs.C_LINE_COMMENT_MODE,
+      hljs.C_BLOCK_COMMENT_MODE
+    ]
+  };
+
+  var FUNCTION_TITLE = hljs.IDENT_RE + '\\s*\\(';
+
   var CPP_KEYWORDS = {
-    keyword: 'false int float while private char catch export virtual operator sizeof ' +
+    keyword: 'int float while private char catch export virtual operator sizeof ' +
       'dynamic_cast|10 typedef const_cast|10 const struct for static_cast|10 union namespace ' +
-      'unsigned long throw volatile static protected bool template mutable if public friend ' +
-      'do return goto auto void enum else break new extern using true class asm case typeid ' +
+      'unsigned long volatile static protected bool template mutable if public friend ' +
+      'do goto auto void enum else break extern using class asm case typeid ' +
       'short reinterpret_cast|10 default double register explicit signed typename try this ' +
-      'switch continue wchar_t inline delete alignof char16_t char32_t constexpr decltype ' +
-      'noexcept nullptr static_assert thread_local restrict _Bool complex _Complex _Imaginary',
-    built_in: 'std string cin cout cerr clog stringstream istringstream ostringstream ' +
+      'switch continue inline delete alignof constexpr decltype ' +
+      'noexcept static_assert thread_local restrict _Bool complex _Complex _Imaginary ' +
+      'atomic_bool atomic_char atomic_schar ' +
+      'atomic_uchar atomic_short atomic_ushort atomic_int atomic_uint atomic_long atomic_ulong atomic_llong ' +
+      'atomic_ullong',
+    built_in: 'std string cin cout cerr clog stdin stdout stderr stringstream istringstream ostringstream ' +
       'auto_ptr deque list queue stack vector map set bitset multiset multimap unordered_set ' +
       'unordered_map unordered_multiset unordered_multimap array shared_ptr abort abs acos ' +
       'asin atan2 atan calloc ceil cosh cos exit exp fabs floor fmod fprintf fputs free frexp ' +
       'fscanf isalnum isalpha iscntrl isdigit isgraph islower isprint ispunct isspace isupper ' +
-      'isxdigit tolower toupper labs ldexp log10 log malloc memchr memcmp memcpy memset modf pow ' +
+      'isxdigit tolower toupper labs ldexp log10 log malloc realloc memchr memcmp memcpy memset modf pow ' +
       'printf putchar puts scanf sinh sin snprintf sprintf sqrt sscanf strcat strchr strcmp ' +
       'strcpy strcspn strlen strncat strncmp strncpy strpbrk strrchr strspn strstr tanh tan ' +
-      'vfprintf vprintf vsprintf'
+      'vfprintf vprintf vsprintf',
+    literal: 'true false nullptr NULL'
   };
+
   return {
-    aliases: ['c', 'h', 'c++', 'h++'],
+    aliases: ['c', 'cc', 'h', 'c++', 'h++', 'hpp'],
     keywords: CPP_KEYWORDS,
     illegal: '</',
     contains: [
+      CPP_PRIMATIVE_TYPES,
       hljs.C_LINE_COMMENT_MODE,
       hljs.C_BLOCK_COMMENT_MODE,
-      hljs.QUOTE_STRING_MODE,
+      NUMBERS,
+      STRINGS,
+      PREPROCESSOR,
       {
-        className: 'string',
-        begin: '\'\\\\?.', end: '\'',
-        illegal: '.'
-      },
-      {
-        className: 'number',
-        begin: '\\b(\\d+(\\.\\d*)?|\\.\\d+)(u|U|l|L|ul|UL|f|F)'
-      },
-      hljs.C_NUMBER_MODE,
-      {
-        className: 'preprocessor',
-        begin: '#', end: '$',
-        keywords: 'if else elif endif define undef warning error line pragma',
-        contains: [
-          {
-            begin: 'include\\s*[<"]', end: '[>"]',
-            keywords: 'include',
-            illegal: '\\n'
-          },
-          hljs.C_LINE_COMMENT_MODE
-        ]
-      },
-      {
-        className: 'stl_container',
         begin: '\\b(deque|list|queue|stack|vector|map|set|bitset|multiset|multimap|unordered_map|unordered_set|unordered_multiset|unordered_multimap|array)\\s*<', end: '>',
         keywords: CPP_KEYWORDS,
-        contains: ['self']
+        contains: ['self', CPP_PRIMATIVE_TYPES]
       },
       {
-        begin: hljs.IDENT_RE + '::'
+        begin: hljs.IDENT_RE + '::',
+        keywords: CPP_KEYWORDS
+      },
+      {
+        // Expression keywords prevent 'keyword Name(...) or else if(...)' from
+        // being recognized as a function definition
+        beginKeywords: 'new throw return else',
+        relevance: 0
+      },
+      {
+        className: 'function',
+        begin: '(' + hljs.IDENT_RE + '[\\*&\\s]+)+' + FUNCTION_TITLE,
+        returnBegin: true, end: /[{;=]/,
+        excludeEnd: true,
+        keywords: CPP_KEYWORDS,
+        illegal: /[^\w\s\*&]/,
+        contains: [
+          {
+            begin: FUNCTION_TITLE, returnBegin: true,
+            contains: [hljs.TITLE_MODE],
+            relevance: 0
+          },
+          {
+            className: 'params',
+            begin: /\(/, end: /\)/,
+            keywords: CPP_KEYWORDS,
+            relevance: 0,
+            contains: [
+              hljs.C_LINE_COMMENT_MODE,
+              hljs.C_BLOCK_COMMENT_MODE,
+              STRINGS,
+              NUMBERS
+            ]
+          },
+          hljs.C_LINE_COMMENT_MODE,
+          hljs.C_BLOCK_COMMENT_MODE,
+          PREPROCESSOR
+        ]
       }
     ]
   };
 };
-},{}],18:[function(require,module,exports){
+},{}],25:[function(require,module,exports){
+module.exports = function(hljs) {
+  var RESOURCES = 'primitive rsc_template';
+
+  var COMMANDS = 'group clone ms master location colocation order fencing_topology ' +
+      'rsc_ticket acl_target acl_group user role ' +
+      'tag xml';
+
+  var PROPERTY_SETS = 'property rsc_defaults op_defaults';
+
+  var KEYWORDS = 'params meta operations op rule attributes utilization';
+
+  var OPERATORS = 'read write deny defined not_defined in_range date spec in ' +
+      'ref reference attribute type xpath version and or lt gt tag ' +
+      'lte gte eq ne \\';
+
+  var TYPES = 'number string';
+
+  var LITERALS = 'Master Started Slave Stopped start promote demote stop monitor true false';
+
+  return {
+    aliases: ['crm', 'pcmk'],
+    case_insensitive: true,
+    keywords: {
+      keyword: KEYWORDS,
+      operator: OPERATORS,
+      type: TYPES,
+      literal: LITERALS
+    },
+    contains: [
+      hljs.HASH_COMMENT_MODE,
+      {
+        beginKeywords: 'node',
+        starts: {
+          className: 'identifier',
+          end: '\\s*([\\w_-]+:)?',
+          starts: {
+            className: 'title',
+            end: '\\s*[\\$\\w_][\\w_-]*'
+          }
+        }
+      },
+      {
+        beginKeywords: RESOURCES,
+        starts: {
+          className: 'title',
+          end: '\\s*[\\$\\w_][\\w_-]*',
+          starts: {
+            className: 'pragma',
+            end: '\\s*@?[\\w_][\\w_\\.:-]*',
+          }
+        }
+      },
+      {
+        begin: '\\b(' + COMMANDS.split(' ').join('|') + ')\\s+',
+        keywords: COMMANDS,
+        starts: {
+          className: 'title',
+          end: '[\\$\\w_][\\w_-]*',
+        }
+      },
+      {
+        beginKeywords: PROPERTY_SETS,
+        starts: {
+          className: 'title',
+          end: '\\s*([\\w_-]+:)?'
+        }
+      },
+      hljs.QUOTE_STRING_MODE,
+      {
+        className: 'pragma',
+        begin: '(ocf|systemd|service|lsb):[\\w_:-]+',
+        relevance: 0
+      },
+      {
+        className: 'number',
+        begin: '\\b\\d+(\\.\\d+)?(ms|s|h|m)?',
+        relevance: 0
+      },
+      {
+        className: 'number',
+        begin: '[-]?(infinity|inf)',
+        relevance: 0
+      },
+      {
+        className: 'variable',
+        begin: /([A-Za-z\$_\#][\w_-]+)=/,
+        relevance: 0
+      },
+      {
+        className: 'tag',
+        begin: '</?',
+        end: '/?>',
+        relevance: 0
+      }
+    ]
+  };
+};
+},{}],26:[function(require,module,exports){
+module.exports = function(hljs) {
+  var NUM_SUFFIX = '(_[uif](8|16|32|64))?';
+  var CRYSTAL_IDENT_RE = '[a-zA-Z_]\\w*[!?=]?';
+  var RE_STARTER = '!=|!==|%|%=|&|&&|&=|\\*|\\*=|\\+|\\+=|,|-|-=|/=|/|:|;|<<|<<=|<=|<|===|==|=|>>>=|>>=|>=|>>>|' +
+    '>>|>|\\[|\\{|\\(|\\^|\\^=|\\||\\|=|\\|\\||~';
+  var CRYSTAL_METHOD_RE = '[a-zA-Z_]\\w*[!?=]?|[-+~]\\@|<<|>>|=~|===?|<=>|[<>]=?|\\*\\*|[-/+%^&*~`|]|\\[\\][=?]?';
+  var CRYSTAL_KEYWORDS = {
+    keyword:
+      'abstract alias as asm begin break case class def do else elsif end ensure enum extend for fun if ifdef ' +
+      'include instance_sizeof is_a? lib macro module next of out pointerof private protected rescue responds_to? ' +
+      'return require self sizeof struct super then type typeof union unless until when while with yield ' +
+      '__DIR__ __FILE__ __LINE__',
+    literal: 'false nil true'
+  };
+  var SUBST = {
+    className: 'subst',
+    begin: '#{', end: '}',
+    keywords: CRYSTAL_KEYWORDS
+  };
+  var EXPANSION = {
+    className: 'expansion',
+    variants: [
+      {begin: '\\{\\{', end: '\\}\\}'},
+      {begin: '\\{%', end: '%\\}'}
+    ],
+    keywords: CRYSTAL_KEYWORDS,
+    relevance: 10
+  };
+
+  function recursiveParen(begin, end) {
+    var
+    contains = [{begin: begin, end: end}];
+    contains[0].contains = contains;
+    return contains;
+  }
+  var STRING = {
+    className: 'string',
+    contains: [hljs.BACKSLASH_ESCAPE, SUBST],
+    variants: [
+      {begin: /'/, end: /'/},
+      {begin: /"/, end: /"/},
+      {begin: /`/, end: /`/},
+      {begin: '%w?\\(', end: '\\)', contains: recursiveParen('\\(', '\\)')},
+      {begin: '%w?\\[', end: '\\]', contains: recursiveParen('\\[', '\\]')},
+      {begin: '%w?{', end: '}', contains: recursiveParen('{', '}')},
+      {begin: '%w?<', end: '>', contains: recursiveParen('<', '>')},
+      {begin: '%w?/', end: '/'},
+      {begin: '%w?%', end: '%'},
+      {begin: '%w?-', end: '-'},
+      {begin: '%w?\\|', end: '\\|'},
+    ],
+    relevance: 0,
+  };
+  var REGEXP = {
+    begin: '(' + RE_STARTER + ')\\s*',
+    contains: [
+      {
+        className: 'regexp',
+        contains: [hljs.BACKSLASH_ESCAPE, SUBST],
+        variants: [
+          {begin: '/', end: '/[a-z]*'},
+          {begin: '%r\\(', end: '\\)', contains: recursiveParen('\\(', '\\)')},
+          {begin: '%r\\[', end: '\\]', contains: recursiveParen('\\[', '\\]')},
+          {begin: '%r{', end: '}', contains: recursiveParen('{', '}')},
+          {begin: '%r<', end: '>', contains: recursiveParen('<', '>')},
+          {begin: '%r/', end: '/'},
+          {begin: '%r%', end: '%'},
+          {begin: '%r-', end: '-'},
+          {begin: '%r\\|', end: '\\|'},
+        ]
+      }
+    ],
+    relevance: 0
+  };
+  var REGEXP2 = {
+    className: 'regexp',
+    contains: [hljs.BACKSLASH_ESCAPE, SUBST],
+    variants: [
+      {begin: '%r\\(', end: '\\)', contains: recursiveParen('\\(', '\\)')},
+      {begin: '%r\\[', end: '\\]', contains: recursiveParen('\\[', '\\]')},
+      {begin: '%r{', end: '}', contains: recursiveParen('{', '}')},
+      {begin: '%r<', end: '>', contains: recursiveParen('<', '>')},
+      {begin: '%r/', end: '/'},
+      {begin: '%r%', end: '%'},
+      {begin: '%r-', end: '-'},
+      {begin: '%r\\|', end: '\\|'},
+    ],
+    relevance: 0
+  };
+  var ATTRIBUTE = {
+    className: 'annotation',
+    begin: '@\\[', end: '\\]',
+    relevance: 5
+  };
+  var CRYSTAL_DEFAULT_CONTAINS = [
+    EXPANSION,
+    STRING,
+    REGEXP,
+    REGEXP2,
+    ATTRIBUTE,
+    hljs.HASH_COMMENT_MODE,
+    {
+      className: 'class',
+      beginKeywords: 'class module struct', end: '$|;',
+      illegal: /=/,
+      contains: [
+        hljs.HASH_COMMENT_MODE,
+        hljs.inherit(hljs.TITLE_MODE, {begin: '[A-Za-z_]\\w*(::\\w+)*(\\?|\\!)?'}),
+        {
+          className: 'inheritance',
+          begin: '<\\s*',
+          contains: [{
+            className: 'parent',
+            begin: '(' + hljs.IDENT_RE + '::)?' + hljs.IDENT_RE
+          }]
+        }
+      ]
+    },
+    {
+      className: 'class',
+      beginKeywords: 'lib enum union', end: '$|;',
+      illegal: /=/,
+      contains: [
+        hljs.HASH_COMMENT_MODE,
+        hljs.inherit(hljs.TITLE_MODE, {begin: '[A-Za-z_]\\w*(::\\w+)*(\\?|\\!)?'}),
+      ],
+      relevance: 10
+    },
+    {
+      className: 'function',
+      beginKeywords: 'def', end: /\B\b/,
+      contains: [
+        hljs.inherit(hljs.TITLE_MODE, {
+          begin: CRYSTAL_METHOD_RE,
+          endsParent: true
+        })
+      ]
+    },
+    {
+      className: 'function',
+      beginKeywords: 'fun macro', end: /\B\b/,
+      contains: [
+        hljs.inherit(hljs.TITLE_MODE, {
+          begin: CRYSTAL_METHOD_RE,
+          endsParent: true
+        })
+      ],
+      relevance: 5
+    },
+    {
+      className: 'constant',
+      begin: '(::)?(\\b[A-Z]\\w*(::)?)+',
+      relevance: 0
+    },
+    {
+      className: 'symbol',
+      begin: hljs.UNDERSCORE_IDENT_RE + '(\\!|\\?)?:',
+      relevance: 0
+    },
+    {
+      className: 'symbol',
+      begin: ':',
+      contains: [STRING, {begin: CRYSTAL_METHOD_RE}],
+      relevance: 0
+    },
+    {
+      className: 'number',
+      variants: [
+        { begin: '\\b0b([01_]*[01])' + NUM_SUFFIX },
+        { begin: '\\b0o([0-7_]*[0-7])' + NUM_SUFFIX },
+        { begin: '\\b0x([A-Fa-f0-9_]*[A-Fa-f0-9])' + NUM_SUFFIX },
+        { begin: '\\b(([0-9][0-9_]*[0-9]|[0-9])(\\.[0-9_]*[0-9])?([eE][+-]?[0-9_]*[0-9])?)' + NUM_SUFFIX}
+      ],
+      relevance: 0
+    },
+    {
+      className: 'variable',
+      begin: '(\\$\\W)|((\\$|\\@\\@?|%)(\\w+))'
+    }
+  ];
+  SUBST.contains = CRYSTAL_DEFAULT_CONTAINS;
+  ATTRIBUTE.contains = CRYSTAL_DEFAULT_CONTAINS;
+  EXPANSION.contains = CRYSTAL_DEFAULT_CONTAINS.slice(1); // without EXPANSION
+
+  return {
+    aliases: ['cr'],
+    lexemes: CRYSTAL_IDENT_RE,
+    keywords: CRYSTAL_KEYWORDS,
+    contains: CRYSTAL_DEFAULT_CONTAINS
+  };
+};
+},{}],27:[function(require,module,exports){
 module.exports = function(hljs) {
   var KEYWORDS =
     // Normal keywords.
-    'abstract as base bool break byte case catch char checked const continue decimal ' +
+    'abstract as base bool break byte case catch char checked const continue decimal dynamic ' +
     'default delegate do double else enum event explicit extern false finally fixed float ' +
-    'for foreach goto if implicit in int interface internal is lock long new null ' +
-    'object operator out override params private protected public readonly ref return sbyte ' +
-    'sealed short sizeof stackalloc static string struct switch this throw true try typeof ' +
-    'uint ulong unchecked unsafe ushort using virtual volatile void while async await ' +
+    'for foreach goto if implicit in int interface internal is lock long null when ' +
+    'object operator out override params private protected public readonly ref sbyte ' +
+    'sealed short sizeof stackalloc static string struct switch this true try typeof ' +
+    'uint ulong unchecked unsafe ushort using virtual volatile void while async ' +
     'protected public private internal ' +
     // Contextual keywords.
     'ascending descending from get group into join let orderby partial select set value var ' +
@@ -1938,26 +4640,29 @@ module.exports = function(hljs) {
     keywords: KEYWORDS,
     illegal: /::/,
     contains: [
-      {
-        className: 'comment',
-        begin: '///', end: '$', returnBegin: true,
-        contains: [
-          {
-            className: 'xmlDocTag',
-            variants: [
-              {
-                begin: '///', relevance: 0
-              },
-              {
-                begin: '<!--|-->'
-              },
-              {
-                begin: '</?', end: '>'
-              }
-            ]
-          }
-        ]
-      },
+      hljs.COMMENT(
+        '///',
+        '$',
+        {
+          returnBegin: true,
+          contains: [
+            {
+              className: 'xmlDocTag',
+              variants: [
+                {
+                  begin: '///', relevance: 0
+                },
+                {
+                  begin: '<!--|-->'
+                },
+                {
+                  begin: '</?', end: '>'
+                }
+              ]
+            }
+          ]
+        }
+      ),
       hljs.C_LINE_COMMENT_MODE,
       hljs.C_BLOCK_COMMENT_MODE,
       {
@@ -1974,7 +4679,7 @@ module.exports = function(hljs) {
       hljs.QUOTE_STRING_MODE,
       hljs.C_NUMBER_MODE,
       {
-        beginKeywords: 'class namespace interface', end: /[{;=]/,
+        beginKeywords: 'class interface', end: /[{;=]/,
         illegal: /[^\s:]/,
         contains: [
           hljs.TITLE_MODE,
@@ -1983,8 +4688,23 @@ module.exports = function(hljs) {
         ]
       },
       {
-        // this prevents 'new Name(...)' from being recognized as a function definition
-        beginKeywords: 'new', end: /\s/,
+        beginKeywords: 'namespace', end: /[{;=]/,
+        illegal: /[^\s:]/,
+        contains: [
+          {
+            // Customization of hljs.TITLE_MODE that allows '.'
+            className: 'title',
+            begin: '[a-zA-Z](\\.?\\w)*',
+            relevance: 0
+          },
+          hljs.C_LINE_COMMENT_MODE,
+          hljs.C_BLOCK_COMMENT_MODE
+        ]
+      },
+      {
+        // Expression keywords prevent 'keyword Name(...)' from being
+        // recognized as a function definition
+        beginKeywords: 'new return throw await',
         relevance: 0
       },
       {
@@ -1995,12 +4715,16 @@ module.exports = function(hljs) {
         contains: [
           {
             begin: hljs.IDENT_RE + '\\s*\\(', returnBegin: true,
-            contains: [hljs.TITLE_MODE]
+            contains: [hljs.TITLE_MODE],
+            relevance: 0
           },
           {
             className: 'params',
             begin: /\(/, end: /\)/,
+            excludeBegin: true,
+            excludeEnd: true,
             keywords: KEYWORDS,
+            relevance: 0,
             contains: [
               hljs.APOS_STRING_MODE,
               hljs.QUOTE_STRING_MODE,
@@ -2015,36 +4739,63 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],19:[function(require,module,exports){
+},{}],28:[function(require,module,exports){
 module.exports = function(hljs) {
   var IDENT_RE = '[a-zA-Z-][a-zA-Z0-9_-]*';
   var FUNCTION = {
     className: 'function',
-    begin: IDENT_RE + '\\(', 
+    begin: IDENT_RE + '\\(',
     returnBegin: true,
     excludeEnd: true,
     end: '\\('
   };
+  var RULE = {
+    className: 'rule',
+    begin: /[A-Z\_\.\-]+\s*:/, returnBegin: true, end: ';', endsWithParent: true,
+    contains: [
+      {
+        className: 'attribute',
+        begin: /\S/, end: ':', excludeEnd: true,
+        starts: {
+          className: 'value',
+          endsWithParent: true, excludeEnd: true,
+          contains: [
+            FUNCTION,
+            hljs.CSS_NUMBER_MODE,
+            hljs.QUOTE_STRING_MODE,
+            hljs.APOS_STRING_MODE,
+            hljs.C_BLOCK_COMMENT_MODE,
+            {
+              className: 'hexcolor', begin: '#[0-9A-Fa-f]+'
+            },
+            {
+              className: 'important', begin: '!important'
+            }
+          ]
+        }
+      }
+    ]
+  };
+
   return {
     case_insensitive: true,
-    illegal: '[=/|\']',
+    illegal: /[=\/|'\$]/,
     contains: [
       hljs.C_BLOCK_COMMENT_MODE,
       {
-        className: 'id', begin: '\\#[A-Za-z0-9_-]+'
+        className: 'id', begin: /\#[A-Za-z0-9_-]+/
       },
       {
-        className: 'class', begin: '\\.[A-Za-z0-9_-]+',
-        relevance: 0
+        className: 'class', begin: /\.[A-Za-z0-9_-]+/
       },
       {
         className: 'attr_selector',
-        begin: '\\[', end: '\\]',
+        begin: /\[/, end: /\]/,
         illegal: '$'
       },
       {
         className: 'pseudo',
-        begin: ':(:)?[a-zA-Z0-9\\_\\-\\+\\(\\)\\"\\\']+'
+        begin: /:(:)?[a-zA-Z0-9\_\-\+\(\)"']+/
       },
       {
         className: 'at_rule',
@@ -2081,45 +4832,16 @@ module.exports = function(hljs) {
       {
         className: 'rules',
         begin: '{', end: '}',
-        illegal: '[^\\s]',
-        relevance: 0,
+        illegal: /\S/,
         contains: [
           hljs.C_BLOCK_COMMENT_MODE,
-          {
-            className: 'rule',
-            begin: '[^\\s]', returnBegin: true, end: ';', endsWithParent: true,
-            contains: [
-              {
-                className: 'attribute',
-                begin: '[A-Z\\_\\.\\-]+', end: ':',
-                excludeEnd: true,
-                illegal: '[^\\s]',
-                starts: {
-                  className: 'value',
-                  endsWithParent: true, excludeEnd: true,
-                  contains: [
-                    FUNCTION,
-                    hljs.CSS_NUMBER_MODE,
-                    hljs.QUOTE_STRING_MODE,
-                    hljs.APOS_STRING_MODE,
-                    hljs.C_BLOCK_COMMENT_MODE,
-                    {
-                      className: 'hexcolor', begin: '#[0-9A-Fa-f]+'
-                    },
-                    {
-                      className: 'important', begin: '!important'
-                    }
-                  ]
-                }
-              }
-            ]
-          }
+          RULE,
         ]
       }
     ]
   };
 };
-},{}],20:[function(require,module,exports){
+},{}],29:[function(require,module,exports){
 module.exports = /**
  * Known issues:
  *
@@ -2347,13 +5069,14 @@ function(hljs) {
    *
    * @type {Object}
    */
-  var D_NESTING_COMMENT_MODE = {
-    className: 'comment',
-    begin: '\\/\\+',
-    contains: ['self'],
-    end: '\\+\\/',
-    relevance: 10
-  };
+  var D_NESTING_COMMENT_MODE = hljs.COMMENT(
+    '\\/\\+',
+    '\\+\\/',
+    {
+      contains: ['self'],
+      relevance: 10
+    }
+  );
 
   return {
     lexemes: hljs.UNDERSCORE_IDENT_RE,
@@ -2376,7 +5099,7 @@ function(hljs) {
     ]
   };
 };
-},{}],21:[function(require,module,exports){
+},{}],30:[function(require,module,exports){
 module.exports = function (hljs) {
   var SUBST = {
     className: 'subst',
@@ -2441,18 +5164,20 @@ module.exports = function (hljs) {
     keywords: KEYWORDS,
     contains: [
       STRING,
-      {
-        className: 'dartdoc',
-        begin: '/\\*\\*', end: '\\*/',
-        subLanguage: 'markdown',
-        subLanguageMode: 'continuous'
-      },
-      {
-        className: 'dartdoc',
-        begin: '///', end: '$',
-        subLanguage: 'markdown',
-        subLanguageMode: 'continuous'
-      },
+      hljs.COMMENT(
+        '/\\*\\*',
+        '\\*/',
+        {
+          subLanguage: 'markdown'
+        }
+      ),
+      hljs.COMMENT(
+        '///',
+        '$',
+        {
+          subLanguage: 'markdown'
+        }
+      ),
       hljs.C_LINE_COMMENT_MODE,
       hljs.C_BLOCK_COMMENT_MODE,
       {
@@ -2475,7 +5200,7 @@ module.exports = function (hljs) {
     ]
   }
 };
-},{}],22:[function(require,module,exports){
+},{}],31:[function(require,module,exports){
 module.exports = function(hljs) {
   var KEYWORDS =
     'exports register file shl array record property for mod while set ally label uses raise not ' +
@@ -2485,13 +5210,23 @@ module.exports = function(hljs) {
     'destructor write message program with read initialization except default nil if case cdecl in ' +
     'downto threadvar of try pascal const external constructor type public then implementation ' +
     'finally published procedure';
-  var COMMENT =  {
-    className: 'comment',
-    variants: [
-      {begin: /\{/, end: /\}/, relevance: 0},
-      {begin: /\(\*/, end: /\*\)/, relevance: 10}
-    ]
-  };
+  var COMMENT_MODES = [
+    hljs.C_LINE_COMMENT_MODE,
+    hljs.COMMENT(
+      /\{/,
+      /\}/,
+      {
+        relevance: 0
+      }
+    ),
+    hljs.COMMENT(
+      /\(\*/,
+      /\*\)/,
+      {
+        relevance: 10
+      }
+    )
+  ];
   var STRING = {
     className: 'string',
     begin: /'/, end: /'/,
@@ -2517,24 +5252,22 @@ module.exports = function(hljs) {
         begin: /\(/, end: /\)/,
         keywords: KEYWORDS,
         contains: [STRING, CHAR_STRING]
-      },
-      COMMENT
-    ]
+      }
+    ].concat(COMMENT_MODES)
   };
   return {
     case_insensitive: true,
     keywords: KEYWORDS,
-    illegal: /("|\$[G-Zg-z]|\/\*|<\/)/,
+    illegal: /"|\$[G-Zg-z]|\/\*|<\/|\|/,
     contains: [
-      COMMENT, hljs.C_LINE_COMMENT_MODE,
       STRING, CHAR_STRING,
       hljs.NUMBER_MODE,
       CLASS,
       FUNCTION
-    ]
+    ].concat(COMMENT_MODES)
   };
 };
-},{}],23:[function(require,module,exports){
+},{}],32:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     aliases: ['patch'],
@@ -2543,7 +5276,7 @@ module.exports = function(hljs) {
         className: 'chunk',
         relevance: 10,
         variants: [
-          {begin: /^\@\@ +\-\d+,\d+ +\+\d+,\d+ +\@\@$/},
+          {begin: /^@@ +\-\d+,\d+ +\+\d+,\d+ +@@$/},
           {begin: /^\*\*\* +\d+,\d+ +\*\*\*\*$/},
           {begin: /^\-\-\- +\d+,\d+ +\-\-\-\-$/}
         ]
@@ -2574,11 +5307,11 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],24:[function(require,module,exports){
+},{}],33:[function(require,module,exports){
 module.exports = function(hljs) {
   var FILTER = {
     className: 'filter',
-    begin: /\|[A-Za-z]+\:?/,
+    begin: /\|[A-Za-z]+:?/,
     keywords:
       'truncatewords removetags linebreaksbr yesno get_digit timesince random striptags ' +
       'filesizeformat escape linebreaks length_is ljust rjust cut urlize fix_ampersands ' +
@@ -2597,16 +5330,10 @@ module.exports = function(hljs) {
   return {
     aliases: ['jinja'],
     case_insensitive: true,
-    subLanguage: 'xml', subLanguageMode: 'continuous',
+    subLanguage: 'xml',
     contains: [
-      {
-        className: 'template_comment',
-        begin: /\{%\s*comment\s*%}/, end: /\{%\s*endcomment\s*%}/
-      },
-      {
-        className: 'template_comment',
-        begin: /\{#/, end: /#}/
-      },
+      hljs.COMMENT(/\{%\s*comment\s*%}/, /\{%\s*endcomment\s*%}/),
+      hljs.COMMENT(/\{#/, /#}/),
       {
         className: 'template_tag',
         begin: /\{%/, end: /%}/,
@@ -2630,21 +5357,86 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],25:[function(require,module,exports){
+},{}],34:[function(require,module,exports){
 module.exports = function(hljs) {
-  var COMMENT = {
-    className: 'comment',
-    begin: /@?rem\b/, end: /$/,
-	  relevance: 10
+  return {
+    aliases: ['bind', 'zone'],
+    keywords: {
+      keyword:
+        'IN A AAAA AFSDB APL CAA CDNSKEY CDS CERT CNAME DHCID DLV DNAME DNSKEY DS HIP IPSECKEY KEY KX ' +
+        'LOC MX NAPTR NS NSEC NSEC3 NSEC3PARAM PTR RRSIG RP SIG SOA SRV SSHFP TA TKEY TLSA TSIG TXT'
+    },
+    contains: [
+      hljs.COMMENT(';', '$'),
+      {
+        className: 'operator',
+        beginKeywords: '$TTL $GENERATE $INCLUDE $ORIGIN'
+      },
+      // IPv6
+      {
+        className: 'number',
+        begin: '((([0-9A-Fa-f]{1,4}:){7}([0-9A-Fa-f]{1,4}|:))|(([0-9A-Fa-f]{1,4}:){6}(:[0-9A-Fa-f]{1,4}|((25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)(\\.(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)){3})|:))|(([0-9A-Fa-f]{1,4}:){5}(((:[0-9A-Fa-f]{1,4}){1,2})|:((25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)(\\.(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)){3})|:))|(([0-9A-Fa-f]{1,4}:){4}(((:[0-9A-Fa-f]{1,4}){1,3})|((:[0-9A-Fa-f]{1,4})?:((25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)(\\.(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){3}(((:[0-9A-Fa-f]{1,4}){1,4})|((:[0-9A-Fa-f]{1,4}){0,2}:((25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)(\\.(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){2}(((:[0-9A-Fa-f]{1,4}){1,5})|((:[0-9A-Fa-f]{1,4}){0,3}:((25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)(\\.(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){1}(((:[0-9A-Fa-f]{1,4}){1,6})|((:[0-9A-Fa-f]{1,4}){0,4}:((25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)(\\.(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)){3}))|:))|(:(((:[0-9A-Fa-f]{1,4}){1,7})|((:[0-9A-Fa-f]{1,4}){0,5}:((25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)(\\.(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)){3}))|:)))'
+      },
+      // IPv4
+      {
+        className: 'number',
+        begin: '((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])'
+      }
+    ]
   };
+};
+},{}],35:[function(require,module,exports){
+module.exports = function(hljs) {
+  return {
+    aliases: ['docker'],
+    case_insensitive: true,
+    keywords: {
+      built_ins: 'from maintainer cmd expose add copy entrypoint volume user workdir onbuild run env label'
+    },
+    contains: [
+      hljs.HASH_COMMENT_MODE,
+      {
+        keywords : {
+          built_in: 'run cmd entrypoint volume add copy workdir onbuild label'
+        },
+        begin: /^ *(onbuild +)?(run|cmd|entrypoint|volume|add|copy|workdir|label) +/,
+        starts: {
+          end: /[^\\]\n/,
+          subLanguage: 'bash'
+        }
+      },
+      {
+        keywords: {
+          built_in: 'from maintainer expose env user onbuild'
+        },
+        begin: /^ *(onbuild +)?(from|maintainer|expose|env|user|onbuild) +/, end: /[^\\]\n/,
+        contains: [
+          hljs.APOS_STRING_MODE,
+          hljs.QUOTE_STRING_MODE,
+          hljs.NUMBER_MODE,
+          hljs.HASH_COMMENT_MODE
+        ]
+      }
+    ]
+  }
+};
+},{}],36:[function(require,module,exports){
+module.exports = function(hljs) {
+  var COMMENT = hljs.COMMENT(
+    /@?rem\b/, /$/,
+    {
+      relevance: 10
+    }
+  );
   var LABEL = {
-	  className: 'label',
-	  begin: '^\\s*[A-Za-z._?][A-Za-z0-9_$#@~.?]*(:|\\s+label)',
-	  relevance: 0
+    className: 'label',
+    begin: '^\\s*[A-Za-z._?][A-Za-z0-9_$#@~.?]*(:|\\s+label)',
+    relevance: 0
   };
   return {
     aliases: ['bat', 'cmd'],
     case_insensitive: true,
+    illegal: /\/\*/,
     keywords: {
       flow: 'if else goto for in do call exit not exist errorlevel defined',
       operator: 'equ neq lss leq gtr geq',
@@ -2655,7 +5447,7 @@ module.exports = function(hljs) {
         'comp compact convert date dir diskcomp diskcopy doskey erase fs ' +
         'find findstr format ftype graftabl help keyb label md mkdir mode more move path ' +
         'pause print popd pushd promt rd recover rem rename replace restore rmdir shift' +
-        'sort start subst time title tree type ver verify vol',
+        'sort start subst time title tree type ver verify vol'
     },
     contains: [
       {
@@ -2677,13 +5469,13 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],26:[function(require,module,exports){
+},{}],37:[function(require,module,exports){
 module.exports = function(hljs) {
   var EXPRESSION_KEYWORDS = 'if eq ne lt lte gt gte select default math sep';
   return {
     aliases: ['dst'],
     case_insensitive: true,
-    subLanguage: 'xml', subLanguageMode: 'continuous',
+    subLanguage: 'xml',
     contains: [
       {
         className: 'expression',
@@ -2712,7 +5504,7 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],27:[function(require,module,exports){
+},{}],38:[function(require,module,exports){
 module.exports = function(hljs) {
   var ELIXIR_IDENT_RE = '[a-zA-Z_][a-zA-Z0-9_]*(\\!|\\?)?';
   var ELIXIR_METHOD_RE = '[a-zA-Z_]\\w*[!?=]?|[-+~]\\@|<<|>>|=~|===?|<=>|[<>]=?|\\*\\*|[-/+%^&*~`|]|\\[\\]=?';
@@ -2738,26 +5530,20 @@ module.exports = function(hljs) {
       }
     ]
   };
-  var PARAMS = {
-    endsWithParent: true, returnEnd: true,
-    lexemes: ELIXIR_IDENT_RE,
-    keywords: ELIXIR_KEYWORDS,
-    relevance: 0
-  };
   var FUNCTION = {
     className: 'function',
-    beginKeywords: 'def defmacro', end: /\bdo\b/,
+    beginKeywords: 'def defp defmacro', end: /\B\b/, // the mode is ended by the title
     contains: [
       hljs.inherit(hljs.TITLE_MODE, {
-        begin: ELIXIR_METHOD_RE,
-        starts: PARAMS
+        begin: ELIXIR_IDENT_RE,
+        endsParent: true
       })
     ]
   };
   var CLASS = hljs.inherit(FUNCTION, {
     className: 'class',
     beginKeywords: 'defmodule defrecord', end: /\bdo\b|$|;/
-  })
+  });
   var ELIXIR_DEFAULT_CONTAINS = [
     STRING,
     hljs.HASH_COMMENT_MODE,
@@ -2813,7 +5599,6 @@ module.exports = function(hljs) {
     }
   ];
   SUBST.contains = ELIXIR_DEFAULT_CONTAINS;
-  PARAMS.contains = ELIXIR_DEFAULT_CONTAINS;
 
   return {
     lexemes: ELIXIR_IDENT_RE,
@@ -2821,7 +5606,108 @@ module.exports = function(hljs) {
     contains: ELIXIR_DEFAULT_CONTAINS
   };
 };
-},{}],28:[function(require,module,exports){
+},{}],39:[function(require,module,exports){
+module.exports = function(hljs) {
+  var COMMENT_MODES = [
+    hljs.COMMENT('--', '$'),
+    hljs.COMMENT(
+      '{-',
+      '-}',
+      {
+        contains: ['self']
+      }
+    )
+  ];
+
+  var CONSTRUCTOR = {
+    className: 'type',
+    begin: '\\b[A-Z][\\w\']*', // TODO: other constructors (build-in, infix).
+    relevance: 0
+  };
+
+  var LIST = {
+    className: 'container',
+    begin: '\\(', end: '\\)',
+    illegal: '"',
+    contains: [
+      {className: 'type', begin: '\\b[A-Z][\\w]*(\\((\\.\\.|,|\\w+)\\))?'}
+    ].concat(COMMENT_MODES)
+  };
+
+  var RECORD = {
+    className: 'container',
+    begin: '{', end: '}',
+    contains: LIST.contains
+  };
+
+  return {
+    keywords:
+      'let in if then else case of where module import exposing ' +
+      'type alias as infix infixl infixr port',
+    contains: [
+
+      // Top-level constructions.
+
+      {
+        className: 'module',
+        begin: '\\bmodule\\b', end: 'where',
+        keywords: 'module where',
+        contains: [LIST].concat(COMMENT_MODES),
+        illegal: '\\W\\.|;'
+      },
+      {
+        className: 'import',
+        begin: '\\bimport\\b', end: '$',
+        keywords: 'import|0 as exposing',
+        contains: [LIST].concat(COMMENT_MODES),
+        illegal: '\\W\\.|;'
+      },
+      {
+        className: 'typedef',
+        begin: '\\btype\\b', end: '$',
+        keywords: 'type alias',
+        contains: [CONSTRUCTOR, LIST, RECORD].concat(COMMENT_MODES)
+      },
+      {
+        className: 'infix',
+        beginKeywords: 'infix infixl infixr', end: '$',
+        contains: [hljs.C_NUMBER_MODE].concat(COMMENT_MODES)
+      },
+      {
+        className: 'foreign',
+        begin: '\\bport\\b', end: '$',
+        keywords: 'port',
+        contains: COMMENT_MODES
+      },
+
+      // Literals and names.
+
+      // TODO: characters.
+      hljs.QUOTE_STRING_MODE,
+      hljs.C_NUMBER_MODE,
+      CONSTRUCTOR,
+      hljs.inherit(hljs.TITLE_MODE, {begin: '^[_a-z][\\w\']*'}),
+
+      {begin: '->|<-'} // No markup, relevance booster
+    ].concat(COMMENT_MODES)
+  };
+};
+},{}],40:[function(require,module,exports){
+module.exports = function(hljs) {
+  return {
+    subLanguage: 'xml',
+    contains: [
+      hljs.COMMENT('<%#', '%>'),
+      {
+        begin: '<%[%=-]?', end: '[%-]?%>',
+        subLanguage: 'ruby',
+        excludeBegin: true,
+        excludeEnd: true
+      }
+    ]
+  };
+};
+},{}],41:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     keywords: {
@@ -2836,10 +5722,7 @@ module.exports = function(hljs) {
         className: 'prompt', begin: '^[0-9]+> ',
         relevance: 10
       },
-      {
-        className: 'comment',
-        begin: '%', end: '$'
-      },
+      hljs.COMMENT('%', '$'),
       {
         className: 'number',
         begin: '\\b(\\d+#[a-fA-F0-9]+|\\d+(\\.\\d+)?([eE][-+]?\\d+)?)',
@@ -2872,7 +5755,7 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],29:[function(require,module,exports){
+},{}],42:[function(require,module,exports){
 module.exports = function(hljs) {
   var BASIC_ATOM_RE = '[a-z\'][a-zA-Z0-9_\']*';
   var FUNCTION_NAME_RE = '(' + BASIC_ATOM_RE + ':' + BASIC_ATOM_RE + '|' + BASIC_ATOM_RE + ')';
@@ -2884,10 +5767,7 @@ module.exports = function(hljs) {
       'false true'
   };
 
-  var COMMENT = {
-    className: 'comment',
-    begin: '%', end: '$'
-  };
+  var COMMENT = hljs.COMMENT('%', '$');
   var NUMBER = {
     className: 'number',
     begin: '\\b(\\d+#[a-fA-F0-9]+|\\d+(\\.\\d+)?([eE][-+]?\\d+)?)',
@@ -3027,7 +5907,7 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],30:[function(require,module,exports){
+},{}],43:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     contains: [
@@ -3056,7 +5936,78 @@ module.exports = function(hljs) {
     case_insensitive: true
   };
 };
-},{}],31:[function(require,module,exports){
+},{}],44:[function(require,module,exports){
+module.exports = function(hljs) {
+  var PARAMS = {
+    className: 'params',
+    begin: '\\(', end: '\\)'
+  };
+
+  var F_KEYWORDS = {
+    constant: '.False. .True.',
+    type: 'integer real character complex logical dimension allocatable|10 parameter ' +
+      'external implicit|10 none double precision assign intent optional pointer ' +
+      'target in out common equivalence data',
+    keyword: 'kind do while private call intrinsic where elsewhere ' +
+      'type endtype endmodule endselect endinterface end enddo endif if forall endforall only contains default return stop then ' +
+      'public subroutine|10 function program .and. .or. .not. .le. .eq. .ge. .gt. .lt. ' +
+      'goto save else use module select case ' +
+      'access blank direct exist file fmt form formatted iostat name named nextrec number opened rec recl sequential status unformatted unit ' +
+      'continue format pause cycle exit ' +
+      'c_null_char c_alert c_backspace c_form_feed flush wait decimal round iomsg ' +
+      'synchronous nopass non_overridable pass protected volatile abstract extends import ' +
+      'non_intrinsic value deferred generic final enumerator class associate bind enum ' +
+      'c_int c_short c_long c_long_long c_signed_char c_size_t c_int8_t c_int16_t c_int32_t c_int64_t c_int_least8_t c_int_least16_t ' +
+      'c_int_least32_t c_int_least64_t c_int_fast8_t c_int_fast16_t c_int_fast32_t c_int_fast64_t c_intmax_t C_intptr_t c_float c_double ' +
+      'c_long_double c_float_complex c_double_complex c_long_double_complex c_bool c_char c_null_ptr c_null_funptr ' +
+      'c_new_line c_carriage_return c_horizontal_tab c_vertical_tab iso_c_binding c_loc c_funloc c_associated  c_f_pointer ' +
+      'c_ptr c_funptr iso_fortran_env character_storage_size error_unit file_storage_size input_unit iostat_end iostat_eor ' +
+      'numeric_storage_size output_unit c_f_procpointer ieee_arithmetic ieee_support_underflow_control ' +
+      'ieee_get_underflow_mode ieee_set_underflow_mode newunit contiguous recursive ' +
+      'pad position action delim readwrite eor advance nml interface procedure namelist include sequence elemental pure',
+    built_in: 'alog alog10 amax0 amax1 amin0 amin1 amod cabs ccos cexp clog csin csqrt dabs dacos dasin datan datan2 dcos dcosh ddim dexp dint ' +
+      'dlog dlog10 dmax1 dmin1 dmod dnint dsign dsin dsinh dsqrt dtan dtanh float iabs idim idint idnint ifix isign max0 max1 min0 min1 sngl ' +
+      'algama cdabs cdcos cdexp cdlog cdsin cdsqrt cqabs cqcos cqexp cqlog cqsin cqsqrt dcmplx dconjg derf derfc dfloat dgamma dimag dlgama ' +
+      'iqint qabs qacos qasin qatan qatan2 qcmplx qconjg qcos qcosh qdim qerf qerfc qexp qgamma qimag qlgama qlog qlog10 qmax1 qmin1 qmod ' +
+      'qnint qsign qsin qsinh qsqrt qtan qtanh abs acos aimag aint anint asin atan atan2 char cmplx conjg cos cosh exp ichar index int log ' +
+      'log10 max min nint sign sin sinh sqrt tan tanh print write dim lge lgt lle llt mod nullify allocate deallocate ' +
+      'adjustl adjustr all allocated any associated bit_size btest ceiling count cshift date_and_time digits dot_product ' +
+      'eoshift epsilon exponent floor fraction huge iand ibclr ibits ibset ieor ior ishft ishftc lbound len_trim matmul ' +
+      'maxexponent maxloc maxval merge minexponent minloc minval modulo mvbits nearest pack present product ' +
+      'radix random_number random_seed range repeat reshape rrspacing scale scan selected_int_kind selected_real_kind ' +
+      'set_exponent shape size spacing spread sum system_clock tiny transpose trim ubound unpack verify achar iachar transfer ' +
+      'dble entry dprod cpu_time command_argument_count get_command get_command_argument get_environment_variable is_iostat_end ' +
+      'ieee_arithmetic ieee_support_underflow_control ieee_get_underflow_mode ieee_set_underflow_mode ' +
+      'is_iostat_eor move_alloc new_line selected_char_kind same_type_as extends_type_of'  +
+      'acosh asinh atanh bessel_j0 bessel_j1 bessel_jn bessel_y0 bessel_y1 bessel_yn erf erfc erfc_scaled gamma log_gamma hypot norm2 ' +
+      'atomic_define atomic_ref execute_command_line leadz trailz storage_size merge_bits ' +
+      'bge bgt ble blt dshiftl dshiftr findloc iall iany iparity image_index lcobound ucobound maskl maskr ' +
+      'num_images parity popcnt poppar shifta shiftl shiftr this_image'
+  };
+  return {
+    case_insensitive: true,
+    aliases: ['f90', 'f95'],
+    keywords: F_KEYWORDS,
+    illegal: /\/\*/,
+    contains: [
+      hljs.inherit(hljs.APOS_STRING_MODE, {className: 'string', relevance: 0}),
+      hljs.inherit(hljs.QUOTE_STRING_MODE, {className: 'string', relevance: 0}),
+      {
+        className: 'function',
+        beginKeywords: 'subroutine function program',
+        illegal: '[${=\\n]',
+        contains: [hljs.UNDERSCORE_TITLE_MODE, PARAMS]
+      },
+      hljs.COMMENT('!', '$', {relevance: 0}),
+      {
+        className: 'number',
+        begin: '(?=\\b|\\+|\\-|\\.)(?=\\.\\d|\\d)(?:\\d+)?(?:\\.?\\d*)(?:[de][+-]?\\d+)?\\b\\.?',
+        relevance: 0
+      }
+    ]
+  };
+};
+},{}],45:[function(require,module,exports){
 module.exports = function(hljs) {
   var TYPEPARAM = {
     begin: '<', end: '>',
@@ -3068,16 +6019,19 @@ module.exports = function(hljs) {
   return {
     aliases: ['fs'],
     keywords:
-      // monad builder keywords (at top, matches before non-bang kws)
-      'yield! return! let! do!' +
-      // regular keywords
       'abstract and as assert base begin class default delegate do done ' +
       'downcast downto elif else end exception extern false finally for ' +
       'fun function global if in inherit inline interface internal lazy let ' +
       'match member module mutable namespace new null of open or ' +
       'override private public rec return sig static struct then to ' +
       'true try type upcast use val void when while with yield',
+    illegal: /\/\*/,
     contains: [
+      {
+        // monad builder keywords (matches before non-bang kws)
+        className: 'keyword',
+        begin: /\b(yield|return|let|do)!/
+      },
       {
         className: 'string',
         begin: '@"', end: '"',
@@ -3087,10 +6041,7 @@ module.exports = function(hljs) {
         className: 'string',
         begin: '"""', end: '"""'
       },
-      {
-        className: 'comment',
-        begin: '\\(\\*', end: '\\*\\)'
-      },
+      hljs.COMMENT('\\(\\*', '\\*\\)'),
       {
         className: 'class',
         beginKeywords: 'type', end: '\\(|=|$', excludeEnd: true,
@@ -3115,7 +6066,44 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],32:[function(require,module,exports){
+},{}],46:[function(require,module,exports){
+module.exports = function (hljs) {
+  var KEYWORDS =
+    'abort acronym acronyms alias all and assign binary card diag display else1 eps eq equation equations file files ' +
+    'for1 free ge gt if inf integer le loop lt maximizing minimizing model models na ne negative no not option ' +
+    'options or ord parameter parameters positive prod putpage puttl repeat sameas scalar scalars semicont semiint ' +
+    'set1 sets smax smin solve sos1 sos2 sum system table then until using variable variables while1 xor yes';
+
+  return {
+    aliases: ['gms'],
+    case_insensitive: true,
+    keywords: KEYWORDS,
+    contains: [
+      {
+        className: 'section',
+        beginKeywords: 'sets parameters variables equations',
+        end: ';',
+        contains: [
+          {
+            begin: '/',
+            end: '/',
+            contains: [hljs.NUMBER_MODE]
+          }
+        ]
+      },
+      {
+        className: 'string',
+        begin: '\\*{3}', end: '\\*{3}'
+      },
+      hljs.NUMBER_MODE,
+      {
+        className: 'number',
+        begin: '\\$[a-zA-Z0-9]+'
+      }
+    ]
+  };
+};
+},{}],47:[function(require,module,exports){
 module.exports = function(hljs) {
     var GCODE_IDENT_RE = '[A-Z_][A-Z0-9_.]*';
     var GCODE_CLOSE_RE = '\\%';
@@ -3134,12 +6122,8 @@ module.exports = function(hljs) {
     };
     var GCODE_CODE = [
         hljs.C_LINE_COMMENT_MODE,
-        {
-            className: 'comment',
-            begin: /\(/, end: /\)/,
-            contains: [hljs.PHRASAL_WORDS_MODE]
-        },
         hljs.C_BLOCK_COMMENT_MODE,
+        hljs.COMMENT(/\(/, /\)/),
         hljs.inherit(hljs.C_NUMBER_MODE, {begin: '([-+]?([0-9]*\\.?[0-9]+\\.?))|' + hljs.C_NUMBER_RE}),
         hljs.inherit(hljs.APOS_STRING_MODE, {illegal: null}),
         hljs.inherit(hljs.QUOTE_STRING_MODE, {illegal: null}),
@@ -3192,7 +6176,7 @@ module.exports = function(hljs) {
         ].concat(GCODE_CODE)
     };
 };
-},{}],33:[function(require,module,exports){
+},{}],48:[function(require,module,exports){
 module.exports = function (hljs) {
   return {
     aliases: ['feature'],
@@ -3202,17 +6186,19 @@ module.exports = function (hljs) {
         className: 'keyword',
         begin: '\\*'
       },
+      hljs.COMMENT('@[^@\r\n\t ]+', '$'),
       {
-        className: 'comment',
-        begin: '@[^@\r\n\t ]+', end: '$'
-      },
-      {
-        className: 'string',
-        begin: '\\|', end: '\\$'
+        begin: '\\|', end: '\\|\\w*$',
+        contains: [
+          {
+            className: 'string',
+            begin: '[^|]+'
+          }
+        ]
       },
       {
         className: 'variable',
-        begin: '<', end: '>',
+        begin: '<', end: '>'
       },
       hljs.HASH_COMMENT_MODE,
       {
@@ -3223,7 +6209,7 @@ module.exports = function (hljs) {
     ]
   };
 };
-},{}],34:[function(require,module,exports){
+},{}],49:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     keywords: {
@@ -3317,7 +6303,7 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],35:[function(require,module,exports){
+},{}],50:[function(require,module,exports){
 module.exports = function(hljs) {
   var GO_KEYWORDS = {
     keyword:
@@ -3349,14 +6335,38 @@ module.exports = function(hljs) {
       },
       {
         className: 'number',
-        begin: '[^a-zA-Z_0-9](\\-|\\+)?\\d+(\\.\\d+|\\/\\d+)?((d|e|f|l|s)(\\+|\\-)?\\d+)?',
+        begin: hljs.C_NUMBER_RE + '[dflsi]?',
         relevance: 0
       },
       hljs.C_NUMBER_MODE
     ]
   };
 };
-},{}],36:[function(require,module,exports){
+},{}],51:[function(require,module,exports){
+module.exports = function(hljs) {
+    return {
+      keywords: {
+        keyword:
+          'println readln print import module function local return let var ' +
+          'while for foreach times in case when match with break continue ' +
+          'augment augmentation each find filter reduce ' +
+          'if then else otherwise try catch finally raise throw orIfNull',
+        typename:
+          'DynamicObject|10 DynamicVariable struct Observable map set vector list array',
+        literal:
+          'true false null'
+      },
+      contains: [
+        hljs.HASH_COMMENT_MODE,
+        hljs.QUOTE_STRING_MODE,
+        hljs.C_NUMBER_MODE,
+        {
+          className: 'annotation', begin: '@[A-Za-z]+'
+        }
+      ]
+    }
+};
+},{}],52:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     case_insensitive: true,
@@ -3380,7 +6390,7 @@ module.exports = function(hljs) {
         'times toInteger toList tokenize upto waitForOrKill withPrintWriter withReader ' +
         'withStream withWriter withWriterAppend write writeLine'
     },
-    contains: [    
+    contains: [
       hljs.C_LINE_COMMENT_MODE,
       hljs.C_BLOCK_COMMENT_MODE,
       hljs.APOS_STRING_MODE,
@@ -3391,32 +6401,34 @@ module.exports = function(hljs) {
     ]
   }
 };
-},{}],37:[function(require,module,exports){
+},{}],53:[function(require,module,exports){
 module.exports = function(hljs) {
     return {
         keywords: {
             typename: 'byte short char int long boolean float double void',
             literal : 'true false null',
             keyword:
-                // groovy specific keywords
+            // groovy specific keywords
             'def as in assert trait ' +
-                // common keywords with Java
+            // common keywords with Java
             'super this abstract static volatile transient public private protected synchronized final ' +
             'class interface enum if else for while switch case break default continue ' +
             'throw throws try catch finally implements extends new import package return instanceof'
         },
 
         contains: [
+            hljs.COMMENT(
+                '/\\*\\*',
+                '\\*/',
+                {
+                    relevance : 0,
+                    contains : [{
+                        className : 'doctag',
+                        begin : '@[A-Za-z]+'
+                    }]
+                }
+            ),
             hljs.C_LINE_COMMENT_MODE,
-            {
-                className: 'javadoc',
-                begin: '/\\*\\*', end: '\\*//*',
-                contains: [
-                    {
-                        className: 'javadoctag', begin: '@[A-Za-z]+'
-                    }
-                ]
-            },
             hljs.C_BLOCK_COMMENT_MODE,
             {
                 className: 'string',
@@ -3470,12 +6482,14 @@ module.exports = function(hljs) {
             },
             {
                 // highlight labeled statements
-                className: 'label', begin: '^\\s*[A-Za-z0-9_$]+:'
+                className: 'label', begin: '^\\s*[A-Za-z0-9_$]+:',
+                relevance: 0
             },
-        ]
+        ],
+        illegal: /#/
     }
 };
-},{}],38:[function(require,module,exports){
+},{}],54:[function(require,module,exports){
 module.exports = // TODO support filter tags like :javascript, support inline HTML
 function(hljs) {
   return {
@@ -3486,12 +6500,14 @@ function(hljs) {
         begin: '^!!!( (5|1\\.1|Strict|Frameset|Basic|Mobile|RDFa|XML\\b.*))?$',
         relevance: 10
       },
-      {
-        className: 'comment',
-        // FIXME these comments should be allowed to span indented lines
-        begin: '^\\s*(!=#|=#|-#|/).*$',
-        relevance: 0
-      },
+      // FIXME these comments should be allowed to span indented lines
+      hljs.COMMENT(
+        '^\\s*(!=#|=#|-#|/).*$',
+        false,
+        {
+          relevance: 0
+        }
+      ),
       {
         begin: '^\\s*(-|=|!=)(?!#)',
         starts: {
@@ -3509,7 +6525,7 @@ function(hljs) {
           },
           {
             className: 'value',
-            begin: '[#\\.]\\w+'
+            begin: '[#\\.][\\w-]+'
           },
           {
             begin: '{\\s*',
@@ -3527,16 +6543,8 @@ function(hljs) {
                     className: 'symbol',
                     begin: ':\\w+'
                   },
-                  {
-                    className: 'string',
-                    begin: '"',
-                    end: '"'
-                  },
-                  {
-                    className: 'string',
-                    begin: '\'',
-                    end: '\''
-                  },
+                  hljs.APOS_STRING_MODE,
+                  hljs.QUOTE_STRING_MODE,
                   {
                     begin: '\\w+',
                     relevance: 0
@@ -3562,16 +6570,8 @@ function(hljs) {
                     begin: '\\w+',
                     relevance: 0
                   },
-                  {
-                    className: 'string',
-                    begin: '"',
-                    end: '"'
-                  },
-                  {
-                    className: 'string',
-                    begin: '\'',
-                    end: '\''
-                  },
+                  hljs.APOS_STRING_MODE,
+                  hljs.QUOTE_STRING_MODE,
                   {
                     begin: '\\w+',
                     relevance: 0
@@ -3597,13 +6597,13 @@ function(hljs) {
     ]
   };
 };
-},{}],39:[function(require,module,exports){
+},{}],55:[function(require,module,exports){
 module.exports = function(hljs) {
   var EXPRESSION_KEYWORDS = 'each in with if else unless bindattr action collection debugger log outlet template unbound view yield';
   return {
     aliases: ['hbs', 'html.hbs', 'html.handlebars'],
     case_insensitive: true,
-    subLanguage: 'xml', subLanguageMode: 'continuous',
+    subLanguage: 'xml',
     contains: [
       {
         className: 'expression',
@@ -3630,18 +6630,18 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],40:[function(require,module,exports){
+},{}],56:[function(require,module,exports){
 module.exports = function(hljs) {
-
-  var COMMENT = {
-    className: 'comment',
-    variants: [
-      { begin: '--', end: '$' },
-      { begin: '{-', end: '-}'
-      , contains: ['self']
+  var COMMENT_MODES = [
+    hljs.COMMENT('--', '$'),
+    hljs.COMMENT(
+      '{-',
+      '-}',
+      {
+        contains: ['self']
       }
-    ]
-  };
+    )
+  ];
 
   var PRAGMA = {
     className: 'pragma',
@@ -3665,11 +6665,10 @@ module.exports = function(hljs) {
     illegal: '"',
     contains: [
       PRAGMA,
-      COMMENT,
       PREPROCESSOR,
       {className: 'type', begin: '\\b[A-Z][\\w]*(\\((\\.\\.|,|\\w+)\\))?'},
       hljs.inherit(hljs.TITLE_MODE, {begin: '[_a-z][\\w\']*'})
-    ]
+    ].concat(COMMENT_MODES)
   };
 
   var RECORD = {
@@ -3693,14 +6692,14 @@ module.exports = function(hljs) {
         className: 'module',
         begin: '\\bmodule\\b', end: 'where',
         keywords: 'module where',
-        contains: [LIST, COMMENT],
+        contains: [LIST].concat(COMMENT_MODES),
         illegal: '\\W\\.|;'
       },
       {
         className: 'import',
         begin: '\\bimport\\b', end: '$',
         keywords: 'import|0 qualified as hiding',
-        contains: [LIST, COMMENT],
+        contains: [LIST].concat(COMMENT_MODES),
         illegal: '\\W\\.|;'
       },
 
@@ -3708,30 +6707,30 @@ module.exports = function(hljs) {
         className: 'class',
         begin: '^(\\s*)?(class|instance)\\b', end: 'where',
         keywords: 'class family instance where',
-        contains: [CONSTRUCTOR, LIST, COMMENT]
+        contains: [CONSTRUCTOR, LIST].concat(COMMENT_MODES)
       },
       {
         className: 'typedef',
         begin: '\\b(data|(new)?type)\\b', end: '$',
         keywords: 'data family type newtype deriving',
-        contains: [PRAGMA, COMMENT, CONSTRUCTOR, LIST, RECORD]
+        contains: [PRAGMA, CONSTRUCTOR, LIST, RECORD].concat(COMMENT_MODES)
       },
       {
         className: 'default',
         beginKeywords: 'default', end: '$',
-        contains: [CONSTRUCTOR, LIST, COMMENT]
+        contains: [CONSTRUCTOR, LIST].concat(COMMENT_MODES)
       },
       {
         className: 'infix',
         beginKeywords: 'infix infixl infixr', end: '$',
-        contains: [hljs.C_NUMBER_MODE, COMMENT]
+        contains: [hljs.C_NUMBER_MODE].concat(COMMENT_MODES)
       },
       {
         className: 'foreign',
         begin: '\\bforeign\\b', end: '$',
         keywords: 'foreign import export ccall stdcall cplusplus jvm ' +
                   'dotnet safe unsafe',
-        contains: [CONSTRUCTOR, hljs.QUOTE_STRING_MODE, COMMENT]
+        contains: [CONSTRUCTOR, hljs.QUOTE_STRING_MODE].concat(COMMENT_MODES)
       },
       {
         className: 'shebang',
@@ -3741,7 +6740,6 @@ module.exports = function(hljs) {
       // "Whitespaces".
 
       PRAGMA,
-      COMMENT,
       PREPROCESSOR,
 
       // Literals and names.
@@ -3753,10 +6751,10 @@ module.exports = function(hljs) {
       hljs.inherit(hljs.TITLE_MODE, {begin: '^[_a-z][\\w\']*'}),
 
       {begin: '->|<-'} // No markup, relevance booster
-    ]
+    ].concat(COMMENT_MODES)
   };
 };
-},{}],41:[function(require,module,exports){
+},{}],57:[function(require,module,exports){
 module.exports = function(hljs) {
   var IDENT_RE = '[a-zA-Z_$][a-zA-Z0-9_$]*';
   var IDENT_FUNC_RETURN_TYPE_RE = '([*]|[a-zA-Z_$][a-zA-Z0-9_$]*)';
@@ -3765,8 +6763,8 @@ module.exports = function(hljs) {
     aliases: ['hx'],
     keywords: {
       keyword: 'break callback case cast catch class continue default do dynamic else enum extends extern ' +
-		'for function here if implements import in inline interface never new override package private ' + 
-		'public return static super switch this throw trace try typedef untyped using var while',
+    'for function here if implements import in inline interface never new override package private ' +
+    'public return static super switch this throw trace try typedef untyped using var while',
       literal: 'true false null'
     },
     contains: [
@@ -3817,9 +6815,10 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],42:[function(require,module,exports){
+},{}],58:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
+    aliases: ['https'],
     illegal: '\\S',
     contains: [
       {
@@ -3846,34 +6845,122 @@ module.exports = function(hljs) {
       },
       {
         begin: '\\n\\n',
-        starts: {subLanguage: '', endsWithParent: true}
+        starts: {subLanguage: [], endsWithParent: true}
       }
     ]
   };
 };
-},{}],43:[function(require,module,exports){
+},{}],59:[function(require,module,exports){
 module.exports = function(hljs) {
+  var START_BRACKET = '\\[';
+  var END_BRACKET = '\\]';
   return {
+    aliases: ['i7'],
     case_insensitive: true,
-    illegal: /\S/,
+    keywords: {
+      // Some keywords more or less unique to I7, for relevance.
+      keyword:
+        // kind:
+        'thing room person man woman animal container ' +
+        'supporter backdrop door ' +
+        // characteristic:
+        'scenery open closed locked inside gender ' +
+        // verb:
+        'is are say understand ' +
+        // misc keyword:
+        'kind of rule'
+    },
     contains: [
       {
-        className: 'comment',
-        begin: ';', end: '$'
+        className: 'string',
+        begin: '"', end: '"',
+        relevance: 0,
+        contains: [
+          {
+            className: 'subst',
+            begin: START_BRACKET, end: END_BRACKET
+          }
+        ]
       },
       {
         className: 'title',
-        begin: '^\\[', end: '\\]'
+        begin: /^(Volume|Book|Part|Chapter|Section|Table)\b/,
+        end: '$'
+      },
+      {
+        // Rule definition
+        // This is here for relevance.
+        begin: /^(Check|Carry out|Report|Instead of|To|Rule|When|Before|After)\b/,
+        end: ':',
+        contains: [
+          {
+            //Rule name
+            begin: '\\b\\(This',
+            end: '\\)'
+          }
+        ]
+      },
+      {
+        className: 'comment',
+        begin: START_BRACKET, end: END_BRACKET,
+        contains: ['self']
+      }
+    ]
+  };
+};
+},{}],60:[function(require,module,exports){
+module.exports = function(hljs) {
+  var STRING = {
+    className: "string",
+    contains: [hljs.BACKSLASH_ESCAPE],
+    variants: [
+      {
+        begin: "'''", end: "'''",
+        relevance: 10
+      }, {
+        begin: '"""', end: '"""',
+        relevance: 10
+      }, {
+        begin: '"', end: '"'
+      }, {
+        begin: "'", end: "'"
+      }
+    ]
+  };
+  return {
+    aliases: ['toml'],
+    case_insensitive: true,
+    illegal: /\S/,
+    contains: [
+      hljs.COMMENT(';', '$'),
+      hljs.HASH_COMMENT_MODE,
+      {
+        className: 'title',
+        begin: /^\s*\[+/, end: /\]+/
       },
       {
         className: 'setting',
-        begin: '^[a-z0-9\\[\\]_-]+[ \\t]*=[ \\t]*', end: '$',
+        begin: /^[a-z0-9\[\]_-]+\s*=\s*/, end: '$',
         contains: [
           {
             className: 'value',
             endsWithParent: true,
             keywords: 'on off true false yes no',
-            contains: [hljs.QUOTE_STRING_MODE, hljs.NUMBER_MODE],
+            contains: [
+              {
+                className: 'variable',
+                variants: [
+                  {begin: /\$[\w\d"][\w\d_]*/},
+                  {begin: /\$\{(.*?)}/}
+                ]
+              },
+              STRING,
+              {
+                className: 'number',
+                begin: /([\+\-]+)?[\d]+_[\d_]+/
+              },
+              hljs.NUMBER_MODE
+            ],
             relevance: 0
           }
         ]
@@ -3881,27 +6968,128 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],44:[function(require,module,exports){
+},{}],61:[function(require,module,exports){
+module.exports = function(hljs) {
+  var PARAMS = {
+    className: 'params',
+    begin: '\\(', end: '\\)'
+  };
+
+  var F_KEYWORDS = {
+    constant: '.False. .True.',
+    type: 'integer real character complex logical dimension allocatable|10 parameter ' +
+      'external implicit|10 none double precision assign intent optional pointer ' +
+      'target in out common equivalence data',
+    keyword: 'kind do while private call intrinsic where elsewhere ' +
+      'type endtype endmodule endselect endinterface end enddo endif if forall endforall only contains default return stop then ' +
+      'public subroutine|10 function program .and. .or. .not. .le. .eq. .ge. .gt. .lt. ' +
+      'goto save else use module select case ' +
+      'access blank direct exist file fmt form formatted iostat name named nextrec number opened rec recl sequential status unformatted unit ' +
+      'continue format pause cycle exit ' +
+      'c_null_char c_alert c_backspace c_form_feed flush wait decimal round iomsg ' +
+      'synchronous nopass non_overridable pass protected volatile abstract extends import ' +
+      'non_intrinsic value deferred generic final enumerator class associate bind enum ' +
+      'c_int c_short c_long c_long_long c_signed_char c_size_t c_int8_t c_int16_t c_int32_t c_int64_t c_int_least8_t c_int_least16_t ' +
+      'c_int_least32_t c_int_least64_t c_int_fast8_t c_int_fast16_t c_int_fast32_t c_int_fast64_t c_intmax_t C_intptr_t c_float c_double ' +
+      'c_long_double c_float_complex c_double_complex c_long_double_complex c_bool c_char c_null_ptr c_null_funptr ' +
+      'c_new_line c_carriage_return c_horizontal_tab c_vertical_tab iso_c_binding c_loc c_funloc c_associated  c_f_pointer ' +
+      'c_ptr c_funptr iso_fortran_env character_storage_size error_unit file_storage_size input_unit iostat_end iostat_eor ' +
+      'numeric_storage_size output_unit c_f_procpointer ieee_arithmetic ieee_support_underflow_control ' +
+      'ieee_get_underflow_mode ieee_set_underflow_mode newunit contiguous recursive ' +
+      'pad position action delim readwrite eor advance nml interface procedure namelist include sequence elemental pure ' +
+      // IRPF90 special keywords
+      'begin_provider &begin_provider end_provider begin_shell end_shell begin_template end_template subst assert touch ' +
+      'soft_touch provide no_dep free irp_if irp_else irp_endif irp_write irp_read',
+    built_in: 'alog alog10 amax0 amax1 amin0 amin1 amod cabs ccos cexp clog csin csqrt dabs dacos dasin datan datan2 dcos dcosh ddim dexp dint ' +
+      'dlog dlog10 dmax1 dmin1 dmod dnint dsign dsin dsinh dsqrt dtan dtanh float iabs idim idint idnint ifix isign max0 max1 min0 min1 sngl ' +
+      'algama cdabs cdcos cdexp cdlog cdsin cdsqrt cqabs cqcos cqexp cqlog cqsin cqsqrt dcmplx dconjg derf derfc dfloat dgamma dimag dlgama ' +
+      'iqint qabs qacos qasin qatan qatan2 qcmplx qconjg qcos qcosh qdim qerf qerfc qexp qgamma qimag qlgama qlog qlog10 qmax1 qmin1 qmod ' +
+      'qnint qsign qsin qsinh qsqrt qtan qtanh abs acos aimag aint anint asin atan atan2 char cmplx conjg cos cosh exp ichar index int log ' +
+      'log10 max min nint sign sin sinh sqrt tan tanh print write dim lge lgt lle llt mod nullify allocate deallocate ' +
+      'adjustl adjustr all allocated any associated bit_size btest ceiling count cshift date_and_time digits dot_product ' +
+      'eoshift epsilon exponent floor fraction huge iand ibclr ibits ibset ieor ior ishft ishftc lbound len_trim matmul ' +
+      'maxexponent maxloc maxval merge minexponent minloc minval modulo mvbits nearest pack present product ' +
+      'radix random_number random_seed range repeat reshape rrspacing scale scan selected_int_kind selected_real_kind ' +
+      'set_exponent shape size spacing spread sum system_clock tiny transpose trim ubound unpack verify achar iachar transfer ' +
+      'dble entry dprod cpu_time command_argument_count get_command get_command_argument get_environment_variable is_iostat_end ' +
+      'ieee_arithmetic ieee_support_underflow_control ieee_get_underflow_mode ieee_set_underflow_mode ' +
+      'is_iostat_eor move_alloc new_line selected_char_kind same_type_as extends_type_of'  +
+      'acosh asinh atanh bessel_j0 bessel_j1 bessel_jn bessel_y0 bessel_y1 bessel_yn erf erfc erfc_scaled gamma log_gamma hypot norm2 ' +
+      'atomic_define atomic_ref execute_command_line leadz trailz storage_size merge_bits ' +
+      'bge bgt ble blt dshiftl dshiftr findloc iall iany iparity image_index lcobound ucobound maskl maskr ' +
+      'num_images parity popcnt poppar shifta shiftl shiftr this_image ' +
+      // IRPF90 special built_ins
+      'IRP_ALIGN irp_here'
+  };
+  return {
+    case_insensitive: true,
+    keywords: F_KEYWORDS,
+    illegal: /\/\*/,
+    contains: [
+      hljs.inherit(hljs.APOS_STRING_MODE, {className: 'string', relevance: 0}),
+      hljs.inherit(hljs.QUOTE_STRING_MODE, {className: 'string', relevance: 0}),
+      {
+        className: 'function',
+        beginKeywords: 'subroutine function program',
+        illegal: '[${=\\n]',
+        contains: [hljs.UNDERSCORE_TITLE_MODE, PARAMS]
+      },
+      hljs.COMMENT('!', '$', {relevance: 0}),
+      hljs.COMMENT('begin_doc', 'end_doc', {relevance: 10}),
+      {
+        className: 'number',
+        begin: '(?=\\b|\\+|\\-|\\.)(?=\\.\\d|\\d)(?:\\d+)?(?:\\.?\\d*)(?:[de][+-]?\\d+)?\\b\\.?',
+        relevance: 0
+      }
+    ]
+  };
+};
+},{}],62:[function(require,module,exports){
 module.exports = function(hljs) {
   var GENERIC_IDENT_RE = hljs.UNDERSCORE_IDENT_RE + '(<' + hljs.UNDERSCORE_IDENT_RE + '>)?';
   var KEYWORDS =
     'false synchronized int abstract float private char boolean static null if const ' +
-    'for true while long throw strictfp finally protected import native final return void ' +
-    'enum else break transient new catch instanceof byte super volatile case assert short ' +
+    'for true while long strictfp finally protected import native final void ' +
+    'enum else break transient catch instanceof byte super volatile case assert short ' +
     'package default double public try this switch continue throws protected public private';
+
+  // https://docs.oracle.com/javase/7/docs/technotes/guides/language/underscores-literals.html
+  var JAVA_NUMBER_RE = '\\b' +
+    '(' +
+      '0[bB]([01]+[01_]+[01]+|[01]+)' + // 0b...
+      '|' +
+      '0[xX]([a-fA-F0-9]+[a-fA-F0-9_]+[a-fA-F0-9]+|[a-fA-F0-9]+)' + // 0x...
+      '|' +
+      '(' +
+        '([\\d]+[\\d_]+[\\d]+|[\\d]+)(\\.([\\d]+[\\d_]+[\\d]+|[\\d]+))?' +
+        '|' +
+        '\\.([\\d]+[\\d_]+[\\d]+|[\\d]+)' +
+      ')' +
+      '([eE][-+]?\\d+)?' + // octal, decimal, float
+    ')' +
+    '[lLfF]?';
+  var JAVA_NUMBER_MODE = {
+    className: 'number',
+    begin: JAVA_NUMBER_RE,
+    relevance: 0
+  };
+
   return {
     aliases: ['jsp'],
     keywords: KEYWORDS,
-    illegal: /<\//,
+    illegal: /<\/|#/,
     contains: [
-      {
-        className: 'javadoc',
-        begin: '/\\*\\*', end: '\\*/',
-        relevance: 0,
-        contains: [{
-          className: 'javadoctag', begin: '(^|\\s)@[A-Za-z]+'
-        }]
-      },
+      hljs.COMMENT(
+        '/\\*\\*',
+        '\\*/',
+        {
+          relevance : 0,
+          contains : [{
+            className : 'doctag',
+            begin : '@[A-Za-z]+'
+          }]
+        }
+      ),
       hljs.C_LINE_COMMENT_MODE,
       hljs.C_BLOCK_COMMENT_MODE,
       hljs.APOS_STRING_MODE,
@@ -3917,8 +7105,9 @@ module.exports = function(hljs) {
         ]
       },
       {
-        // this prevents 'new Name(...)' from being recognized as a function definition
-        beginKeywords: 'new', end: /\s/,
+        // Expression keywords prevent 'keyword Name(...)' from being
+        // recognized as a function definition
+        beginKeywords: 'new throw return else',
         relevance: 0
       },
       {
@@ -3929,12 +7118,14 @@ module.exports = function(hljs) {
         contains: [
           {
             begin: hljs.UNDERSCORE_IDENT_RE + '\\s*\\(', returnBegin: true,
+            relevance: 0,
             contains: [hljs.UNDERSCORE_TITLE_MODE]
           },
           {
             className: 'params',
             begin: /\(/, end: /\)/,
             keywords: KEYWORDS,
+            relevance: 0,
             contains: [
               hljs.APOS_STRING_MODE,
               hljs.QUOTE_STRING_MODE,
@@ -3946,22 +7137,22 @@ module.exports = function(hljs) {
           hljs.C_BLOCK_COMMENT_MODE
         ]
       },
-      hljs.C_NUMBER_MODE,
+      JAVA_NUMBER_MODE,
       {
         className: 'annotation', begin: '@[A-Za-z]+'
       }
     ]
   };
 };
-},{}],45:[function(require,module,exports){
+},{}],63:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     aliases: ['js'],
     keywords: {
       keyword:
-        'in if for while finally var new function do return void else break catch ' +
+        'in of if for while finally var new function do return void else break catch ' +
         'instanceof with throw case default try this switch continue typeof delete ' +
-        'let yield const class',
+        'let yield const export super debugger as async await',
       literal:
         'true false null undefined NaN Infinity',
       built_in:
@@ -3971,19 +7162,39 @@ module.exports = function(hljs) {
         'TypeError URIError Number Math Date String RegExp Array Float32Array ' +
         'Float64Array Int16Array Int32Array Int8Array Uint16Array Uint32Array ' +
         'Uint8Array Uint8ClampedArray ArrayBuffer DataView JSON Intl arguments require ' +
-        'module console window document'
+        'module console window document Symbol Set Map WeakSet WeakMap Proxy Reflect ' +
+        'Promise'
     },
     contains: [
       {
         className: 'pi',
-        begin: /^\s*('|")use strict('|")/,
-        relevance: 10
+        relevance: 10,
+        begin: /^\s*['"]use (strict|asm)['"]/
       },
       hljs.APOS_STRING_MODE,
       hljs.QUOTE_STRING_MODE,
+      { // template string
+        className: 'string',
+        begin: '`', end: '`',
+        contains: [
+          hljs.BACKSLASH_ESCAPE,
+          {
+            className: 'subst',
+            begin: '\\$\\{', end: '\\}'
+          }
+        ]
+      },
       hljs.C_LINE_COMMENT_MODE,
       hljs.C_BLOCK_COMMENT_MODE,
-      hljs.C_NUMBER_MODE,
+      {
+        className: 'number',
+        variants: [
+          { begin: '\\b(0[bB][01]+)' },
+          { begin: '\\b(0[oO][0-7]+)' },
+          { begin: hljs.C_NUMBER_RE }
+        ],
+        relevance: 0
+      },
       { // "value" container
         begin: '(' + hljs.RE_STARTERS_RE + '|\\b(case|return|throw)\\b)\\s*',
         keywords: 'return throw case',
@@ -3991,8 +7202,8 @@ module.exports = function(hljs) {
           hljs.C_LINE_COMMENT_MODE,
           hljs.C_BLOCK_COMMENT_MODE,
           hljs.REGEXP_MODE,
-          { // E4X
-            begin: /</, end: />;/,
+          { // E4X / JSX
+            begin: /</, end: />\s*[);\]]/,
             relevance: 0,
             subLanguage: 'xml'
           }
@@ -4007,11 +7218,12 @@ module.exports = function(hljs) {
           {
             className: 'params',
             begin: /\(/, end: /\)/,
+            excludeBegin: true,
+            excludeEnd: true,
             contains: [
               hljs.C_LINE_COMMENT_MODE,
               hljs.C_BLOCK_COMMENT_MODE
-            ],
-            illegal: /["'\(]/
+            ]
           }
         ],
         illegal: /\[|%/
@@ -4021,11 +7233,30 @@ module.exports = function(hljs) {
       },
       {
         begin: '\\.' + hljs.IDENT_RE, relevance: 0 // hack: prevents detection of keywords after dots
+      },
+      // ECMAScript 6 modules import
+      {
+        beginKeywords: 'import', end: '[;$]',
+        keywords: 'import from as',
+        contains: [
+          hljs.APOS_STRING_MODE,
+          hljs.QUOTE_STRING_MODE
+        ]
+      },
+      { // ES6 class
+        className: 'class',
+        beginKeywords: 'class', end: /[{;=]/, excludeEnd: true,
+        illegal: /[:"\[\]]/,
+        contains: [
+          {beginKeywords: 'extends'},
+          hljs.UNDERSCORE_TITLE_MODE
+        ]
       }
-    ]
+    ],
+    illegal: /#/
   };
 };
-},{}],46:[function(require,module,exports){
+},{}],64:[function(require,module,exports){
 module.exports = function(hljs) {
   var LITERALS = {literal: 'true false null'};
   var TYPES = [
@@ -4063,19 +7294,281 @@ module.exports = function(hljs) {
     illegal: '\\S'
   };
 };
-},{}],47:[function(require,module,exports){
+},{}],65:[function(require,module,exports){
+module.exports = function(hljs) {
+  // Since there are numerous special names in Julia, it is too much trouble
+  // to maintain them by hand. Hence these names (i.e. keywords, literals and
+  // built-ins) are automatically generated from Julia (v0.3.0) itself through
+  // following scripts for each.
+
+  var KEYWORDS = {
+    // # keyword generator
+    // println("\"in\",")
+    // for kw in Base.REPLCompletions.complete_keyword("")
+    //     println("\"$kw\",")
+    // end
+    keyword:
+      'in abstract baremodule begin bitstype break catch ccall const continue do else elseif end export ' +
+      'finally for function global if immutable import importall let local macro module quote return try type ' +
+      'typealias using while',
+
+    // # literal generator
+    // println("\"true\",\n\"false\"")
+    // for name in Base.REPLCompletions.completions("", 0)[1]
+    //     try
+    //         s = symbol(name)
+    //         v = eval(s)
+    //         if !isa(v, Function) &&
+    //            !isa(v, DataType) &&
+    //            !issubtype(typeof(v), Tuple) &&
+    //            !isa(v, UnionType) &&
+    //            !isa(v, Module) &&
+    //            !isa(v, TypeConstructor) &&
+    //            !isa(v, Colon)
+    //             println("\"$name\",")
+    //         end
+    //     end
+    // end
+    literal:
+      'true false ANY ARGS CPU_CORES C_NULL DL_LOAD_PATH DevNull ENDIAN_BOM ENV I|0 Inf Inf16 Inf32 ' +
+      'InsertionSort JULIA_HOME LOAD_PATH MS_ASYNC MS_INVALIDATE MS_SYNC MergeSort NaN NaN16 NaN32 OS_NAME QuickSort ' +
+      'RTLD_DEEPBIND RTLD_FIRST RTLD_GLOBAL RTLD_LAZY RTLD_LOCAL RTLD_NODELETE RTLD_NOLOAD RTLD_NOW RoundDown ' +
+      'RoundFromZero RoundNearest RoundToZero RoundUp STDERR STDIN STDOUT VERSION WORD_SIZE catalan cglobal e|0 eu|0 ' +
+      'eulergamma golden im nothing pi γ π φ',
+
+    // # built_in generator:
+    // for name in Base.REPLCompletions.completions("", 0)[1]
+    //     try
+    //         v = eval(symbol(name))
+    //         if isa(v, DataType)
+    //             println("\"$name\",")
+    //         end
+    //     end
+    // end
+    built_in:
+      'ASCIIString AbstractArray AbstractRNG AbstractSparseArray Any ArgumentError Array Associative Base64Pipe ' +
+      'Bidiagonal BigFloat BigInt BitArray BitMatrix BitVector Bool BoundsError Box CFILE Cchar Cdouble Cfloat Char ' +
+      'CharString Cint Clong Clonglong ClusterManager Cmd Coff_t Colon Complex Complex128 Complex32 Complex64 ' +
+      'Condition Cptrdiff_t Cshort Csize_t Cssize_t Cuchar Cuint Culong Culonglong Cushort Cwchar_t DArray DataType ' +
+      'DenseArray Diagonal Dict DimensionMismatch DirectIndexString Display DivideError DomainError EOFError ' +
+      'EachLine Enumerate ErrorException Exception Expr Factorization FileMonitor FileOffset Filter Float16 Float32 ' +
+      'Float64 FloatRange FloatingPoint Function GetfieldNode GotoNode Hermitian IO IOBuffer IOStream IPv4 IPv6 ' +
+      'InexactError Int Int128 Int16 Int32 Int64 Int8 IntSet Integer InterruptException IntrinsicFunction KeyError ' +
+      'LabelNode LambdaStaticData LineNumberNode LoadError LocalProcess MIME MathConst MemoryError MersenneTwister ' +
+      'Method MethodError MethodTable Module NTuple NewvarNode Nothing Number ObjectIdDict OrdinalRange ' +
+      'OverflowError ParseError PollingFileWatcher ProcessExitedException ProcessGroup Ptr QuoteNode Range Range1 ' +
+      'Ranges Rational RawFD Real Regex RegexMatch RemoteRef RepString RevString RopeString RoundingMode Set ' +
+      'SharedArray Signed SparseMatrixCSC StackOverflowError Stat StatStruct StepRange String SubArray SubString ' +
+      'SymTridiagonal Symbol SymbolNode Symmetric SystemError Task TextDisplay Timer TmStruct TopNode Triangular ' +
+      'Tridiagonal Type TypeConstructor TypeError TypeName TypeVar UTF16String UTF32String UTF8String UdpSocket ' +
+      'Uint Uint128 Uint16 Uint32 Uint64 Uint8 UndefRefError UndefVarError UniformScaling UnionType UnitRange ' +
+      'Unsigned Vararg VersionNumber WString WeakKeyDict WeakRef Woodbury Zip'
+  };
+
+  // ref: http://julia.readthedocs.org/en/latest/manual/variables/#allowed-variable-names
+  var VARIABLE_NAME_RE = "[A-Za-z_\\u00A1-\\uFFFF][A-Za-z_0-9\\u00A1-\\uFFFF]*";
+
+  // placeholder for recursive self-reference
+  var DEFAULT = { lexemes: VARIABLE_NAME_RE, keywords: KEYWORDS };
+
+  var TYPE_ANNOTATION = {
+    className: "type-annotation",
+    begin: /::/
+  };
+
+  var SUBTYPE = {
+    className: "subtype",
+    begin: /<:/
+  };
+
+  // ref: http://julia.readthedocs.org/en/latest/manual/integers-and-floating-point-numbers/
+  var NUMBER = {
+    className: "number",
+    // supported numeric literals:
+    //  * binary literal (e.g. 0x10)
+    //  * octal literal (e.g. 0o76543210)
+    //  * hexadecimal literal (e.g. 0xfedcba876543210)
+    //  * hexadecimal floating point literal (e.g. 0x1p0, 0x1.2p2)
+    //  * decimal literal (e.g. 9876543210, 100_000_000)
+    //  * floating pointe literal (e.g. 1.2, 1.2f, .2, 1., 1.2e10, 1.2e-10)
+    begin: /(\b0x[\d_]*(\.[\d_]*)?|0x\.\d[\d_]*)p[-+]?\d+|\b0[box][a-fA-F0-9][a-fA-F0-9_]*|(\b\d[\d_]*(\.[\d_]*)?|\.\d[\d_]*)([eEfF][-+]?\d+)?/,
+    relevance: 0
+  };
+
+  var CHAR = {
+    className: "char",
+    begin: /'(.|\\[xXuU][a-zA-Z0-9]+)'/
+  };
+
+  var INTERPOLATION = {
+    className: 'subst',
+    begin: /\$\(/, end: /\)/,
+    keywords: KEYWORDS
+  };
+
+  var INTERPOLATED_VARIABLE = {
+    className: 'variable',
+    begin: "\\$" + VARIABLE_NAME_RE
+  };
+
+  // TODO: neatly escape normal code in string literal
+  var STRING = {
+    className: "string",
+    contains: [hljs.BACKSLASH_ESCAPE, INTERPOLATION, INTERPOLATED_VARIABLE],
+    variants: [
+      { begin: /\w*"/, end: /"\w*/ },
+      { begin: /\w*"""/, end: /"""\w*/ }
+    ]
+  };
+
+  var COMMAND = {
+    className: "string",
+    contains: [hljs.BACKSLASH_ESCAPE, INTERPOLATION, INTERPOLATED_VARIABLE],
+    begin: '`', end: '`'
+  };
+
+  var MACROCALL = {
+    className: "macrocall",
+    begin: "@" + VARIABLE_NAME_RE
+  };
+
+  var COMMENT = {
+    className: "comment",
+    variants: [
+      { begin: "#=", end: "=#", relevance: 10 },
+      { begin: '#', end: '$' }
+    ]
+  };
+
+  DEFAULT.contains = [
+    NUMBER,
+    CHAR,
+    TYPE_ANNOTATION,
+    SUBTYPE,
+    STRING,
+    COMMAND,
+    MACROCALL,
+    COMMENT,
+    hljs.HASH_COMMENT_MODE
+  ];
+  INTERPOLATION.contains = DEFAULT.contains;
+
+  return DEFAULT;
+};
+},{}],66:[function(require,module,exports){
+module.exports = function (hljs) {
+  var KEYWORDS = 'val var get set class trait object public open private protected ' +
+    'final enum if else do while for when break continue throw try catch finally ' +
+    'import package is as in return fun override default companion reified inline volatile transient native';
+
+  return {
+    keywords: {
+      typename: 'Byte Short Char Int Long Boolean Float Double Void Unit Nothing',
+      literal: 'true false null',
+      keyword: KEYWORDS
+    },
+    contains : [
+      hljs.COMMENT(
+        '/\\*\\*',
+        '\\*/',
+        {
+          relevance : 0,
+          contains : [{
+            className : 'doctag',
+            begin : '@[A-Za-z]+'
+          }]
+        }
+      ),
+      hljs.C_LINE_COMMENT_MODE,
+      hljs.C_BLOCK_COMMENT_MODE,
+      {
+        className: 'type',
+        begin: /</, end: />/,
+        returnBegin: true,
+        excludeEnd: false,
+        relevance: 0
+      },
+      {
+        className: 'function',
+        beginKeywords: 'fun', end: '[(]|$',
+        returnBegin: true,
+        excludeEnd: true,
+        keywords: KEYWORDS,
+        illegal: /fun\s+(<.*>)?[^\s\(]+(\s+[^\s\(]+)\s*=/,
+        relevance: 5,
+        contains: [
+          {
+            begin: hljs.UNDERSCORE_IDENT_RE + '\\s*\\(', returnBegin: true,
+            relevance: 0,
+            contains: [hljs.UNDERSCORE_TITLE_MODE]
+          },
+          {
+            className: 'type',
+            begin: /</, end: />/, keywords: 'reified',
+            relevance: 0
+          },
+          {
+            className: 'params',
+            begin: /\(/, end: /\)/,
+            keywords: KEYWORDS,
+            relevance: 0,
+            illegal: /\([^\(,\s:]+,/,
+            contains: [
+              {
+                className: 'typename',
+                begin: /:\s*/, end: /\s*[=\)]/, excludeBegin: true, returnEnd: true,
+                relevance: 0
+              }
+            ]
+          },
+          hljs.C_LINE_COMMENT_MODE,
+          hljs.C_BLOCK_COMMENT_MODE
+        ]
+      },
+      {
+        className: 'class',
+        beginKeywords: 'class trait', end: /[:\{(]|$/,
+        excludeEnd: true,
+        illegal: 'extends implements',
+        contains: [
+          hljs.UNDERSCORE_TITLE_MODE,
+          {
+            className: 'type',
+            begin: /</, end: />/, excludeBegin: true, excludeEnd: true,
+            relevance: 0
+          },
+          {
+            className: 'typename',
+            begin: /[,:]\s*/, end: /[<\(,]|$/, excludeBegin: true, returnEnd: true
+          }
+        ]
+      },
+      {
+        className: 'variable', beginKeywords: 'var val', end: /\s*[=:$]/, excludeEnd: true
+      },
+      hljs.QUOTE_STRING_MODE,
+      {
+        className: 'shebang',
+        begin: "^#!/usr/bin/env", end: '$',
+        illegal: '\n'
+      },
+      hljs.C_NUMBER_MODE
+    ]
+  };
+};
+},{}],67:[function(require,module,exports){
 module.exports = function(hljs) {
   var LASSO_IDENT_RE = '[a-zA-Z_][a-zA-Z0-9_.]*';
   var LASSO_ANGLE_RE = '<\\?(lasso(script)?|=)';
   var LASSO_CLOSE_RE = '\\]|\\?>';
   var LASSO_KEYWORDS = {
     literal:
-      'true false none minimal full all void and or not ' +
+      'true false none minimal full all void ' +
       'bw nbw ew new cn ncn lt lte gt gte eq neq rx nrx ft',
     built_in:
       'array date decimal duration integer map pair string tag xml null ' +
-      'bytes list queue set stack staticarray tie local var variable ' +
-      'global data self inherited',
+      'boolean bytes keyword list locale queue set stack staticarray ' +
+      'local var variable global data self inherited currentcapture givenblock',
     keyword:
       'error_code error_msg error_pop error_push error_reset cache ' +
       'database_names database_schemanames database_tablenames define_tag ' +
@@ -4096,11 +7589,13 @@ module.exports = function(hljs) {
       'skip split_thread sum take thread to trait type where with ' +
       'yield yieldhome'
   };
-  var HTML_COMMENT = {
-    className: 'comment',
-    begin: '<!--', end: '-->',
-    relevance: 0
-  };
+  var HTML_COMMENT = hljs.COMMENT(
+    '<!--',
+    '-->',
+    {
+      relevance: 0
+    }
+  );
   var LASSO_NOPROCESS = {
     className: 'preprocessor',
     begin: '\\[noprocess\\]',
@@ -4120,14 +7615,13 @@ module.exports = function(hljs) {
     begin: '\'' + LASSO_IDENT_RE + '\''
   };
   var LASSO_CODE = [
+    hljs.COMMENT(
+      '/\\*\\*!',
+      '\\*/'
+    ),
     hljs.C_LINE_COMMENT_MODE,
-    {
-      className: 'javadoc',
-      begin: '/\\*\\*!', end: '\\*/',
-      contains: [hljs.PHRASAL_WORDS_MODE]
-    },
     hljs.C_BLOCK_COMMENT_MODE,
-    hljs.inherit(hljs.C_NUMBER_MODE, {begin: hljs.C_NUMBER_RE + '|-?(infinity|nan)\\b'}),
+    hljs.inherit(hljs.C_NUMBER_MODE, {begin: hljs.C_NUMBER_RE + '|(infinity|nan)\\b'}),
     hljs.inherit(hljs.APOS_STRING_MODE, {illegal: null}),
     hljs.inherit(hljs.QUOTE_STRING_MODE, {illegal: null}),
     {
@@ -4155,7 +7649,7 @@ module.exports = function(hljs) {
       className: 'attribute',
       variants: [
         {
-          begin: '-' + hljs.UNDERSCORE_IDENT_RE,
+          begin: '-(?!infinity)' + hljs.UNDERSCORE_IDENT_RE,
           relevance: 0
         },
         {
@@ -4171,14 +7665,14 @@ module.exports = function(hljs) {
           contains: [LASSO_DATAMEMBER]
         },
         {
-          begin: ':=|/(?!\\w)=?|[-+*%=<>&|!?\\\\]+',
+          begin: '->|\\\\|&&?|\\|\\||!(?!=|>)|(and|or|not)\\b',
           relevance: 0
         }
       ]
     },
     {
       className: 'built_in',
-      begin: '\\.\\.?',
+      begin: '\\.\\.?\\s*',
       relevance: 0,
       contains: [LASSO_DATAMEMBER]
     },
@@ -4225,7 +7719,7 @@ module.exports = function(hljs) {
               relevance: 0,
               starts: {
                 className: 'markup',
-                end: LASSO_ANGLE_RE,
+                end: '\\[noprocess\\]|' + LASSO_ANGLE_RE,
                 returnEnd: true,
                 contains: [HTML_COMMENT]
               }
@@ -4248,10 +7742,148 @@ module.exports = function(hljs) {
     ].concat(LASSO_CODE)
   };
 };
-},{}],48:[function(require,module,exports){
+},{}],68:[function(require,module,exports){
+module.exports = function(hljs) {
+  var IDENT_RE        = '[\\w-]+'; // yes, Less identifiers may begin with a digit
+  var INTERP_IDENT_RE = '(' + IDENT_RE + '|@{' + IDENT_RE + '})';
+
+  /* Generic Modes */
+
+  var RULES = [], VALUE = []; // forward def. for recursive modes
+
+  var STRING_MODE = function(c) { return {
+    // Less strings are not multiline (also include '~' for more consistent coloring of "escaped" strings)
+    className: 'string', begin: '~?' + c + '.*?' + c
+  };};
+
+  var IDENT_MODE = function(name, begin, relevance) { return {
+    className: name, begin: begin, relevance: relevance
+  };};
+
+  var FUNCT_MODE = function(name, ident, obj) {
+    return hljs.inherit({
+        className: name, begin: ident + '\\(', end: '\\(',
+        returnBegin: true, excludeEnd: true, relevance: 0
+    }, obj);
+  };
+
+  var PARENS_MODE = {
+    // used only to properly balance nested parens inside mixin call, def. arg list
+    begin: '\\(', end: '\\)', contains: VALUE, relevance: 0
+  };
+
+  // generic Less highlighter (used almost everywhere except selectors):
+  VALUE.push(
+    hljs.C_LINE_COMMENT_MODE,
+    hljs.C_BLOCK_COMMENT_MODE,
+    STRING_MODE("'"),
+    STRING_MODE('"'),
+    hljs.CSS_NUMBER_MODE, // fixme: it does not include dot for numbers like .5em :(
+    IDENT_MODE('hexcolor', '#[0-9A-Fa-f]+\\b'),
+    FUNCT_MODE('function', '(url|data-uri)', {
+      starts: {className: 'string', end: '[\\)\\n]', excludeEnd: true}
+    }),
+    FUNCT_MODE('function', IDENT_RE),
+    PARENS_MODE,
+    IDENT_MODE('variable', '@@?' + IDENT_RE, 10),
+    IDENT_MODE('variable', '@{'  + IDENT_RE + '}'),
+    IDENT_MODE('built_in', '~?`[^`]*?`'), // inline javascript (or whatever host language) *multiline* string
+    { // @media features (it’s here to not duplicate things in AT_RULE_MODE with extra PARENS_MODE overriding):
+      className: 'attribute', begin: IDENT_RE + '\\s*:', end: ':', returnBegin: true, excludeEnd: true
+    }
+  );
+
+  var VALUE_WITH_RULESETS = VALUE.concat({
+    begin: '{', end: '}', contains: RULES
+  });
+
+  var MIXIN_GUARD_MODE = {
+    beginKeywords: 'when', endsWithParent: true,
+    contains: [{beginKeywords: 'and not'}].concat(VALUE) // using this form to override VALUE’s 'function' match
+  };
+
+  /* Rule-Level Modes */
+
+  var RULE_MODE = {
+    className: 'attribute',
+    begin: INTERP_IDENT_RE, end: ':', excludeEnd: true,
+    contains: [hljs.C_LINE_COMMENT_MODE, hljs.C_BLOCK_COMMENT_MODE],
+    illegal: /\S/,
+    starts: {end: '[;}]', returnEnd: true, contains: VALUE, illegal: '[<=$]'}
+  };
+
+  var AT_RULE_MODE = {
+    className: 'at_rule', // highlight only at-rule keyword
+    begin: '@(import|media|charset|font-face|(-[a-z]+-)?keyframes|supports|document|namespace|page|viewport|host)\\b',
+    starts: {end: '[;{}]', returnEnd: true, contains: VALUE, relevance: 0}
+  };
+
+  // variable definitions and calls
+  var VAR_RULE_MODE = {
+    className: 'variable',
+    variants: [
+      // using more strict pattern for higher relevance to increase chances of Less detection.
+      // this is *the only* Less specific statement used in most of the sources, so...
+      // (we’ll still often loose to the css-parser unless there's '//' comment,
+      // simply because 1 variable just can't beat 99 properties :)
+      {begin: '@' + IDENT_RE + '\\s*:', relevance: 15},
+      {begin: '@' + IDENT_RE}
+    ],
+    starts: {end: '[;}]', returnEnd: true, contains: VALUE_WITH_RULESETS}
+  };
+
+  var SELECTOR_MODE = {
+    // first parse unambiguous selectors (i.e. those not starting with tag)
+    // then fall into the scary lookahead-discriminator variant.
+    // this mode also handles mixin definitions and calls
+    variants: [{
+      begin: '[\\.#:&\\[]', end: '[;{}]'  // mixin calls end with ';'
+      }, {
+      begin: INTERP_IDENT_RE + '[^;]*{',
+      end: '{'
+    }],
+    returnBegin: true,
+    returnEnd:   true,
+    illegal: '[<=\'$"]',
+    contains: [
+      hljs.C_LINE_COMMENT_MODE,
+      hljs.C_BLOCK_COMMENT_MODE,
+      MIXIN_GUARD_MODE,
+      IDENT_MODE('keyword',  'all\\b'),
+      IDENT_MODE('variable', '@{'  + IDENT_RE + '}'),     // otherwise it’s identified as tag
+      IDENT_MODE('tag',       INTERP_IDENT_RE + '%?', 0), // '%' for more consistent coloring of @keyframes "tags"
+      IDENT_MODE('id',       '#'   + INTERP_IDENT_RE),
+      IDENT_MODE('class',    '\\.' + INTERP_IDENT_RE, 0),
+      IDENT_MODE('keyword',  '&', 0),
+      FUNCT_MODE('pseudo',   ':not'),
+      FUNCT_MODE('keyword',  ':extend'),
+      IDENT_MODE('pseudo',   '::?' + INTERP_IDENT_RE),
+      {className: 'attr_selector', begin: '\\[', end: '\\]'},
+      {begin: '\\(', end: '\\)', contains: VALUE_WITH_RULESETS}, // argument list of parametric mixins
+      {begin: '!important'} // eat !important after mixin call or it will be colored as tag
+    ]
+  };
+
+  RULES.push(
+    hljs.C_LINE_COMMENT_MODE,
+    hljs.C_BLOCK_COMMENT_MODE,
+    AT_RULE_MODE,
+    VAR_RULE_MODE,
+    SELECTOR_MODE,
+    RULE_MODE
+  );
+
+  return {
+    case_insensitive: true,
+    illegal: '[=>\'/<($"]',
+    contains: RULES
+  };
+};
+},{}],69:[function(require,module,exports){
 module.exports = function(hljs) {
   var LISP_IDENT_RE = '[a-zA-Z_\\-\\+\\*\\/\\<\\=\\>\\&\\#][a-zA-Z0-9_\\-\\+\\*\\/\\<\\=\\>\\&\\#!]*';
-  var LISP_SIMPLE_NUMBER_RE = '(\\-|\\+)?\\d+(\\.\\d+|\\/\\d+)?((d|e|f|l|s)(\\+|\\-)?\\d+)?';
+  var MEC_RE = '\\|[^]*?\\|';
+  var LISP_SIMPLE_NUMBER_RE = '(\\-|\\+)?\\d+(\\.\\d+|\\/\\d+)?((d|e|f|l|s|D|E|F|L|S)(\\+|\\-)?\\d+)?';
   var SHEBANG = {
     className: 'shebang',
     begin: '^#!', end: '$'
@@ -4264,17 +7896,19 @@ module.exports = function(hljs) {
     className: 'number',
     variants: [
       {begin: LISP_SIMPLE_NUMBER_RE, relevance: 0},
-      {begin: '#b[0-1]+(/[0-1]+)?'},
-      {begin: '#o[0-7]+(/[0-7]+)?'},
-      {begin: '#x[0-9a-f]+(/[0-9a-f]+)?'},
-      {begin: '#c\\(' + LISP_SIMPLE_NUMBER_RE + ' +' + LISP_SIMPLE_NUMBER_RE, end: '\\)'}
+      {begin: '#(b|B)[0-1]+(/[0-1]+)?'},
+      {begin: '#(o|O)[0-7]+(/[0-7]+)?'},
+      {begin: '#(x|X)[0-9a-fA-F]+(/[0-9a-fA-F]+)?'},
+      {begin: '#(c|C)\\(' + LISP_SIMPLE_NUMBER_RE + ' +' + LISP_SIMPLE_NUMBER_RE, end: '\\)'}
     ]
   };
   var STRING = hljs.inherit(hljs.QUOTE_STRING_MODE, {illegal: null});
-  var COMMENT = {
-    className: 'comment',
-    begin: ';', end: '$', relevance: 0
-  };
+  var COMMENT = hljs.COMMENT(
+    ';', '$',
+    {
+      relevance: 0
+    }
+  );
   var VARIABLE = {
     className: 'variable',
     begin: '\\*', end: '\\*'
@@ -4283,13 +7917,20 @@ module.exports = function(hljs) {
     className: 'keyword',
     begin: '[:&]' + LISP_IDENT_RE
   };
+  var IDENT = {
+    begin: LISP_IDENT_RE,
+    relevance: 0
+  };
+  var MEC = {
+    begin: MEC_RE
+  };
   var QUOTED_LIST = {
     begin: '\\(', end: '\\)',
-    contains: ['self', LITERAL, STRING, NUMBER]
+    contains: ['self', LITERAL, STRING, NUMBER, IDENT]
   };
   var QUOTED = {
     className: 'quoted',
-    contains: [NUMBER, STRING, VARIABLE, KEYWORD, QUOTED_LIST],
+    contains: [NUMBER, STRING, VARIABLE, KEYWORD, QUOTED_LIST, IDENT],
     variants: [
       {
         begin: '[\'`]\\(', end: '\\)'
@@ -4297,23 +7938,38 @@ module.exports = function(hljs) {
       {
         begin: '\\(quote ', end: '\\)',
         keywords: 'quote'
+      },
+      {
+        begin: '\'' + MEC_RE
       }
     ]
   };
   var QUOTED_ATOM = {
     className: 'quoted',
-    begin: '\'' + LISP_IDENT_RE
+    variants: [
+      {begin: '\'' + LISP_IDENT_RE},
+      {begin: '#\'' + LISP_IDENT_RE + '(::' + LISP_IDENT_RE + ')*'}
+    ]
   };
   var LIST = {
     className: 'list',
-    begin: '\\(', end: '\\)'
+    begin: '\\(\\s*', end: '\\)'
   };
   var BODY = {
     endsWithParent: true,
     relevance: 0
   };
-  LIST.contains = [{className: 'keyword', begin: LISP_IDENT_RE}, BODY];
-  BODY.contains = [QUOTED, QUOTED_ATOM, LIST, LITERAL, NUMBER, STRING, COMMENT, VARIABLE, KEYWORD];
+  LIST.contains = [
+    {
+      className: 'keyword',
+      variants: [
+        {begin: LISP_IDENT_RE},
+        {begin: MEC_RE}
+      ]
+    },
+    BODY
+  ];
+  BODY.contains = [QUOTED, QUOTED_ATOM, LIST, LITERAL, NUMBER, STRING, COMMENT, VARIABLE, KEYWORD, MEC, IDENT];
 
   return {
     illegal: /\S/,
@@ -4325,29 +7981,23 @@ module.exports = function(hljs) {
       COMMENT,
       QUOTED,
       QUOTED_ATOM,
-      LIST
+      LIST,
+      IDENT
     ]
   };
 };
-},{}],49:[function(require,module,exports){
+},{}],70:[function(require,module,exports){
 module.exports = function(hljs) {
   var VARIABLE = {
     className: 'variable', begin: '\\b[gtps][A-Z]+[A-Za-z0-9_\\-]*\\b|\\$_[A-Z]+',
     relevance: 0
   };
-  var COMMENT = {
-    className: 'comment', end: '$',
-    variants: [
-      hljs.C_BLOCK_COMMENT_MODE,
-      hljs.HASH_COMMENT_MODE,
-      {
-        begin: '--'
-      },
-      {
-        begin: '[^:]//'
-      }
-    ]
-  };
+  var COMMENT_MODES = [
+    hljs.C_BLOCK_COMMENT_MODE,
+    hljs.HASH_COMMENT_MODE,
+    hljs.COMMENT('--', '$'),
+    hljs.COMMENT('[^:]//', '$')
+  ];
   var TITLE1 = hljs.inherit(hljs.TITLE_MODE, {
     variants: [
       {begin: '\\b_*rig[A-Z]+[A-Za-z0-9_\\-]*'},
@@ -4359,8 +8009,10 @@ module.exports = function(hljs) {
     case_insensitive: false,
     keywords: {
       keyword:
+        '$_COOKIE $_FILES $_GET $_GET_BINARY $_GET_RAW $_POST $_POST_BINARY $_POST_RAW $_SESSION $_SERVER ' +
+        'codepoint codepoints segment segments codeunit codeunits sentence sentences trueWord trueWords paragraph ' +
         'after byte bytes english the until http forever descending using line real8 with seventh ' +
-        'for stdout finally element word fourth before black ninth sixth characters chars stderr ' +
+        'for stdout finally element word words fourth before black ninth sixth characters chars stderr ' +
         'uInt1 uInt1s uInt2 uInt2s stdin string lines relative rel any fifth items from middle mid ' +
         'at else of catch then third it file milliseconds seconds second secs sec int1 int1s int4 ' +
         'int4s internet int2 int2s normal text item last long detailed effective uInt4 uInt4s repeat ' +
@@ -4378,18 +8030,20 @@ module.exports = function(hljs) {
         'div mod wrap and or bitAnd bitNot bitOr bitXor among not in a an within ' +
         'contains ends with begins the keys of keys',
       built_in:
-        'put abs acos aliasReference annuity arrayDecode arrayEncode asin atan atan2 average avg base64Decode ' +
-        'base64Encode baseConvert binaryDecode binaryEncode byteToNum cachedURL cachedURLs charToNum ' +
-        'cipherNames commandNames compound compress constantNames cos date dateFormat decompress directories ' +
-        'diskSpace DNSServers exp exp1 exp2 exp10 extents files flushEvents folders format functionNames global ' +
-        'globals hasMemory hostAddress hostAddressToName hostName hostNameToAddress isNumber ISOToMac itemOffset ' +
+        'put abs acos aliasReference annuity arrayDecode arrayEncode asin atan atan2 average avg avgDev base64Decode ' +
+        'base64Encode baseConvert binaryDecode binaryEncode byteOffset byteToNum cachedURL cachedURLs charToNum ' +
+        'cipherNames codepointOffset codepointProperty codepointToNum codeunitOffset commandNames compound compress ' +
+        'constantNames cos date dateFormat decompress directories ' +
+        'diskSpace DNSServers exp exp1 exp2 exp10 extents files flushEvents folders format functionNames geometricMean global ' +
+        'globals hasMemory harmonicMean hostAddress hostAddressToName hostName hostNameToAddress isNumber ISOToMac itemOffset ' +
         'keys len length libURLErrorData libUrlFormData libURLftpCommand libURLLastHTTPHeaders libURLLastRHHeaders ' +
         'libUrlMultipartFormAddPart libUrlMultipartFormData libURLVersion lineOffset ln ln1 localNames log log2 log10 ' +
         'longFilePath lower macToISO matchChunk matchText matrixMultiply max md5Digest median merge millisec ' +
-        'millisecs millisecond milliseconds min monthNames num number numToByte numToChar offset open openfiles ' +
-        'openProcesses openProcessIDs openSockets paramCount param params peerAddress pendingMessages platform ' +
-        'processID random randomBytes replaceText result revCreateXMLTree revCreateXMLTreeFromFile revCurrentRecord ' +
-        'revCurrentRecordIsFirst revCurrentRecordIsLast revDatabaseColumnCount revDatabaseColumnIsNull ' +
+        'millisecs millisecond milliseconds min monthNames nativeCharToNum normalizeText num number numToByte numToChar ' +
+        'numToCodepoint numToNativeChar offset open openfiles openProcesses openProcessIDs openSockets ' +
+        'paragraphOffset paramCount param params peerAddress pendingMessages platform popStdDev populationStandardDeviation ' +
+        'populationVariance popVariance processID random randomBytes replaceText result revCreateXMLTree revCreateXMLTreeFromFile ' +
+        'revCurrentRecord revCurrentRecordIsFirst revCurrentRecordIsLast revDatabaseColumnCount revDatabaseColumnIsNull ' +
         'revDatabaseColumnLengths revDatabaseColumnNames revDatabaseColumnNamed revDatabaseColumnNumbered ' +
         'revDatabaseColumnTypes revDatabaseConnectResult revDatabaseCursors revDatabaseID revDatabaseTableNames ' +
         'revDatabaseType revDataFromQuery revdb_closeCursor revdb_columnbynumber revdb_columncount revdb_columnisnull ' +
@@ -4398,24 +8052,26 @@ module.exports = function(hljs) {
         'revdb_disconnect revdb_execute revdb_iseof revdb_isbof revdb_movefirst revdb_movelast revdb_movenext ' +
         'revdb_moveprev revdb_query revdb_querylist revdb_recordcount revdb_rollback revdb_tablenames ' +
         'revGetDatabaseDriverPath revNumberOfRecords revOpenDatabase revOpenDatabases revQueryDatabase ' +
-        'revQueryDatabaseBlob revQueryResult revQueryIsAtStart revQueryIsAtEnd revUnixFromMacPath ' +
-        'revXMLAttribute revXMLAttributes revXMLAttributeValues revXMLChildContents revXMLChildNames ' +
-        'revXMLFirstChild revXMLMatchingNode revXMLNextSibling revXMLNodeContents revXMLNumberOfChildren ' +
-        'revXMLParent revXMLPreviousSibling revXMLRootNode revXMLRPC_CreateRequest revXMLRPC_Documents ' +
-        'revXMLRPC_Error revXMLRPC_Execute revXMLRPC_GetHost revXMLRPC_GetMethod revXMLRPC_GetParam revXMLText ' +
+        'revQueryDatabaseBlob revQueryResult revQueryIsAtStart revQueryIsAtEnd revUnixFromMacPath revXMLAttribute ' +
+        'revXMLAttributes revXMLAttributeValues revXMLChildContents revXMLChildNames revXMLCreateTreeFromFileWithNamespaces ' +
+        'revXMLCreateTreeWithNamespaces revXMLDataFromXPathQuery revXMLEvaluateXPath revXMLFirstChild revXMLMatchingNode ' +
+        'revXMLNextSibling revXMLNodeContents revXMLNumberOfChildren revXMLParent revXMLPreviousSibling ' +
+        'revXMLRootNode revXMLRPC_CreateRequest revXMLRPC_Documents revXMLRPC_Error ' +
+        'revXMLRPC_GetHost revXMLRPC_GetMethod revXMLRPC_GetParam revXMLText revXMLRPC_Execute ' +
         'revXMLRPC_GetParamCount revXMLRPC_GetParamNode revXMLRPC_GetParamType revXMLRPC_GetPath revXMLRPC_GetPort ' +
         'revXMLRPC_GetProtocol revXMLRPC_GetRequest revXMLRPC_GetResponse revXMLRPC_GetSocket revXMLTree ' +
-        'revXMLTrees revXMLValidateDTD revZipDescribeItem revZipEnumerateItems revZipOpenArchives round ' +
-        'sec secs seconds sha1Digest shell shortFilePath sin specialFolderPath sqrt standardDeviation statRound ' +
-        'stdDev sum sysError systemVersion tan tempName tick ticks time to toLower toUpper transpose trunc ' +
-        'uniDecode uniEncode upper URLDecode URLEncode URLStatus value variableNames version waitDepth weekdayNames wordOffset ' +
-        'add breakpoint cancel clear local variable file word line folder directory URL close socket process ' +
+        'revXMLTrees revXMLValidateDTD revZipDescribeItem revZipEnumerateItems revZipOpenArchives round sampVariance ' +
+        'sec secs seconds sentenceOffset sha1Digest shell shortFilePath sin specialFolderPath sqrt standardDeviation statRound ' +
+        'stdDev sum sysError systemVersion tan tempName textDecode textEncode tick ticks time to tokenOffset toLower toUpper ' +
+        'transpose truewordOffset trunc uniDecode uniEncode upper URLDecode URLEncode URLStatus uuid value variableNames ' +
+        'variance version waitDepth weekdayNames wordOffset xsltApplyStylesheet xsltApplyStylesheetFromFile xsltLoadStylesheet ' +
+        'xsltLoadStylesheetFromFile add breakpoint cancel clear local variable file word line folder directory URL close socket process ' +
         'combine constant convert create new alias folder directory decrypt delete variable word line folder ' +
         'directory URL dispatch divide do encrypt filter get include intersect kill libURLDownloadToFile ' +
         'libURLFollowHttpRedirects libURLftpUpload libURLftpUploadFile libURLresetAll libUrlSetAuthCallback ' +
         'libURLSetCustomHTTPHeaders libUrlSetExpect100 libURLSetFTPListCommand libURLSetFTPMode libURLSetFTPStopTime ' +
-        'libURLSetStatusCallback load multiply socket process post seek rel relative read from process rename ' +
-        'replace require resetAll revAddXMLNode revAppendXML revCloseCursor revCloseDatabase revCommitDatabase ' +
+        'libURLSetStatusCallback load multiply socket prepare process post seek rel relative read from process rename ' +
+        'replace require resetAll resolve revAddXMLNode revAppendXML revCloseCursor revCloseDatabase revCommitDatabase ' +
         'revCopyFile revCopyFolder revCopyXMLNode revDeleteFolder revDeleteXMLNode revDeleteAllXMLTrees ' +
         'revDeleteXMLTree revExecuteSQL revGoURL revInsertXMLNode revMoveFolder revMoveToFirstRecord revMoveToLastRecord ' +
         'revMoveToNextRecord revMoveToPreviousRecord revMoveToRecord revMoveXMLNode revPutIntoXMLNode revRollBackDatabase ' +
@@ -4424,7 +8080,7 @@ module.exports = function(hljs) {
         'revXMLRPC_SetMethod revXMLRPC_SetPort revXMLRPC_SetProtocol revXMLRPC_SetSocket revZipAddItemWithData ' +
         'revZipAddItemWithFile revZipAddUncompressedItemWithData revZipAddUncompressedItemWithFile revZipCancel ' +
         'revZipCloseArchive revZipDeleteItem revZipExtractItemToFile revZipExtractItemToVariable revZipSetProgressCallback ' +
-        'revZipRenameItem revZipReplaceItemWithData revZipReplaceItemWithFile revZipOpenArchive send set sort split ' +
+        'revZipRenameItem revZipReplaceItemWithData revZipReplaceItemWithFile revZipOpenArchive send set sort split start stop ' +
         'subtract union unload wait write'
     },
     contains: [
@@ -4448,7 +8104,8 @@ module.exports = function(hljs) {
       },
       {
         className: 'function',
-        beginKeywords: 'end', end: '$',
+        begin: '\\bend\\s+', end: '$',
+        keywords: 'end',
         contains: [
           TITLE2,
           TITLE1
@@ -4468,37 +8125,177 @@ module.exports = function(hljs) {
         ]
       },
       {
-        className: 'command',
-        beginKeywords: 'end', end: '$',
-        contains: [
-          TITLE2,
-          TITLE1
+        className: 'preprocessor',
+        variants: [
+          {
+            begin: '<\\?(rev|lc|livecode)',
+            relevance: 10
+          },
+          { begin: '<\\?' },
+          { begin: '\\?>' }
         ]
       },
-      {
-        className: 'preprocessor',
-        begin: '<\\?rev|<\\?lc|<\\?livecode',
-        relevance: 10
-      },
-      {
-        className: 'preprocessor',
-        begin: '<\\?'
-      },
-      {
-        className: 'preprocessor',
-        begin: '\\?>'
-      },
-      COMMENT,
       hljs.APOS_STRING_MODE,
       hljs.QUOTE_STRING_MODE,
       hljs.BINARY_NUMBER_MODE,
       hljs.C_NUMBER_MODE,
       TITLE1
-    ],
+    ].concat(COMMENT_MODES),
     illegal: ';$|^\\[|^='
   };
 };
-},{}],50:[function(require,module,exports){
+},{}],71:[function(require,module,exports){
+module.exports = function(hljs) {
+  var KEYWORDS = {
+    keyword:
+      // JS keywords
+      'in if for while finally new do return else break catch instanceof throw try this ' +
+      'switch continue typeof delete debugger case default function var with ' +
+      // LiveScript keywords
+      'then unless until loop of by when and or is isnt not it that otherwise from to til fallthrough super ' +
+      'case default function var void const let enum export import native ' +
+      '__hasProp __extends __slice __bind __indexOf',
+    literal:
+      // JS literals
+      'true false null undefined ' +
+      // LiveScript literals
+      'yes no on off it that void',
+    built_in:
+      'npm require console print module global window document'
+  };
+  var JS_IDENT_RE = '[A-Za-z$_](?:\-[0-9A-Za-z$_]|[0-9A-Za-z$_])*';
+  var TITLE = hljs.inherit(hljs.TITLE_MODE, {begin: JS_IDENT_RE});
+  var SUBST = {
+    className: 'subst',
+    begin: /#\{/, end: /}/,
+    keywords: KEYWORDS
+  };
+  var SUBST_SIMPLE = {
+    className: 'subst',
+    begin: /#[A-Za-z$_]/, end: /(?:\-[0-9A-Za-z$_]|[0-9A-Za-z$_])*/,
+    keywords: KEYWORDS
+  };
+  var EXPRESSIONS = [
+    hljs.BINARY_NUMBER_MODE,
+    {
+      className: 'number',
+      begin: '(\\b0[xX][a-fA-F0-9_]+)|(\\b\\d(\\d|_\\d)*(\\.(\\d(\\d|_\\d)*)?)?(_*[eE]([-+]\\d(_\\d|\\d)*)?)?[_a-z]*)',
+      relevance: 0,
+      starts: {end: '(\\s*/)?', relevance: 0} // a number tries to eat the following slash to prevent treating it as a regexp
+    },
+    {
+      className: 'string',
+      variants: [
+        {
+          begin: /'''/, end: /'''/,
+          contains: [hljs.BACKSLASH_ESCAPE]
+        },
+        {
+          begin: /'/, end: /'/,
+          contains: [hljs.BACKSLASH_ESCAPE]
+        },
+        {
+          begin: /"""/, end: /"""/,
+          contains: [hljs.BACKSLASH_ESCAPE, SUBST, SUBST_SIMPLE]
+        },
+        {
+          begin: /"/, end: /"/,
+          contains: [hljs.BACKSLASH_ESCAPE, SUBST, SUBST_SIMPLE]
+        },
+        {
+          begin: /\\/, end: /(\s|$)/,
+          excludeEnd: true
+        }
+      ]
+    },
+    {
+      className: 'pi',
+      variants: [
+        {
+          begin: '//', end: '//[gim]*',
+          contains: [SUBST, hljs.HASH_COMMENT_MODE]
+        },
+        {
+          // regex can't start with space to parse x / 2 / 3 as two divisions
+          // regex can't start with *, and it supports an "illegal" in the main mode
+          begin: /\/(?![ *])(\\\/|.)*?\/[gim]*(?=\W|$)/
+        }
+      ]
+    },
+    {
+      className: 'property',
+      begin: '@' + JS_IDENT_RE
+    },
+    {
+      begin: '``', end: '``',
+      excludeBegin: true, excludeEnd: true,
+      subLanguage: 'javascript'
+    }
+  ];
+  SUBST.contains = EXPRESSIONS;
+
+  var PARAMS = {
+    className: 'params',
+    begin: '\\(', returnBegin: true,
+    /* We need another contained nameless mode to not have every nested
+    pair of parens to be called "params" */
+    contains: [
+      {
+        begin: /\(/, end: /\)/,
+        keywords: KEYWORDS,
+        contains: ['self'].concat(EXPRESSIONS)
+      }
+    ]
+  };
+
+  return {
+    aliases: ['ls'],
+    keywords: KEYWORDS,
+    illegal: /\/\*/,
+    contains: EXPRESSIONS.concat([
+      hljs.COMMENT('\\/\\*', '\\*\\/'),
+      hljs.HASH_COMMENT_MODE,
+      {
+        className: 'function',
+        contains: [TITLE, PARAMS],
+        returnBegin: true,
+        variants: [
+          {
+            begin: '(' + JS_IDENT_RE + '\\s*(?:=|:=)\\s*)?(\\(.*\\))?\\s*\\B\\->\\*?', end: '\\->\\*?'
+          },
+          {
+            begin: '(' + JS_IDENT_RE + '\\s*(?:=|:=)\\s*)?!?(\\(.*\\))?\\s*\\B[-~]{1,2}>\\*?', end: '[-~]{1,2}>\\*?'
+          },
+          {
+            begin: '(' + JS_IDENT_RE + '\\s*(?:=|:=)\\s*)?(\\(.*\\))?\\s*\\B!?[-~]{1,2}>\\*?', end: '!?[-~]{1,2}>\\*?'
+          }
+        ]
+      },
+      {
+        className: 'class',
+        beginKeywords: 'class',
+        end: '$',
+        illegal: /[:="\[\]]/,
+        contains: [
+          {
+            beginKeywords: 'extends',
+            endsWithParent: true,
+            illegal: /[:="\[\]]/,
+            contains: [TITLE]
+          },
+          TITLE
+        ]
+      },
+      {
+        className: 'attribute',
+        begin: JS_IDENT_RE + ':', end: ':',
+        returnBegin: true, returnEnd: true,
+        relevance: 0
+      }
+    ])
+  };
+};
+},{}],72:[function(require,module,exports){
 module.exports = function(hljs) {
   var OPENING_LONG_BRACKET = '\\[=*\\[';
   var CLOSING_LONG_BRACKET = '\\]=*\\]';
@@ -4507,17 +8304,16 @@ module.exports = function(hljs) {
     contains: ['self']
   };
   var COMMENTS = [
-    {
-      className: 'comment',
-      begin: '--(?!' + OPENING_LONG_BRACKET + ')', end: '$'
-    },
-    {
-      className: 'comment',
-      begin: '--' + OPENING_LONG_BRACKET, end: CLOSING_LONG_BRACKET,
-      contains: [LONG_BRACKETS],
-      relevance: 10
-    }
-  ]
+    hljs.COMMENT('--(?!' + OPENING_LONG_BRACKET + ')', '$'),
+    hljs.COMMENT(
+      '--' + OPENING_LONG_BRACKET,
+      CLOSING_LONG_BRACKET,
+      {
+        contains: [LONG_BRACKETS],
+        relevance: 10
+      }
+    )
+  ];
   return {
     lexemes: hljs.UNDERSCORE_IDENT_RE,
     keywords: {
@@ -4555,7 +8351,7 @@ module.exports = function(hljs) {
     ])
   };
 };
-},{}],51:[function(require,module,exports){
+},{}],73:[function(require,module,exports){
 module.exports = function(hljs) {
   var VARIABLE = {
     className: 'variable',
@@ -4601,7 +8397,7 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],52:[function(require,module,exports){
+},{}],74:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     aliases: ['md', 'mkdown', 'mkd'],
@@ -4703,7 +8499,7 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],53:[function(require,module,exports){
+},{}],75:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     aliases: ['mma'],
@@ -4762,7 +8558,7 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],54:[function(require,module,exports){
+},{}],76:[function(require,module,exports){
 module.exports = function(hljs) {
   var COMMON_CONTAINS = [
     hljs.C_NUMBER_MODE,
@@ -4772,6 +8568,14 @@ module.exports = function(hljs) {
       contains: [hljs.BACKSLASH_ESCAPE, {begin: '\'\''}]
     }
   ];
+  var TRANSPOSE = {
+    relevance: 0,
+    contains: [
+      {
+        className: 'operator', begin: /'['\.]*/
+      }
+    ]
+  };
 
   return {
     keywords: {
@@ -4812,34 +8616,40 @@ module.exports = function(hljs) {
         ]
       },
       {
-        className: 'transposed_variable',
-        begin: '[a-zA-Z_][a-zA-Z_0-9]*(\'+[\\.\']*|[\\.\']+)', end: '',
-        relevance: 0
-      },
-      {
-        className: 'matrix',
-        begin: '\\[', end: '\\]\'*[\\.\']*',
-        contains: COMMON_CONTAINS,
-        relevance: 0
-      },
-      {
-        className: 'cell',
-        begin: '\\{',
-        contains: COMMON_CONTAINS,
-        illegal: /:/,
-        variants: [
-          {end: /\}'[\.']*/},
-          {end: /\}/, relevance: 0}
+        begin: /[a-zA-Z_][a-zA-Z_0-9]*'['\.]*/,
+        returnBegin: true,
+        relevance: 0,
+        contains: [
+          {begin: /[a-zA-Z_][a-zA-Z_0-9]*/, relevance: 0},
+          TRANSPOSE.contains[0]
         ]
       },
       {
-        className: 'comment',
-        begin: '\\%', end: '$'
-      }
+        className: 'matrix',
+        begin: '\\[', end: '\\]',
+        contains: COMMON_CONTAINS,
+        relevance: 0,
+        starts: TRANSPOSE
+      },
+      {
+        className: 'cell',
+        begin: '\\{', end: /}/,
+        contains: COMMON_CONTAINS,
+        relevance: 0,
+        starts: TRANSPOSE
+      },
+      {
+        // transpose operators at the end of a function call
+        begin: /\)/,
+        relevance: 0,
+        starts: TRANSPOSE
+      },
+      hljs.COMMENT('^\\s*\\%\\{\\s*$', '^\\s*\\%\\}\\s*$'),
+      hljs.COMMENT('\\%', '$')
     ].concat(COMMON_CONTAINS)
   };
 };
-},{}],55:[function(require,module,exports){
+},{}],77:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     keywords:
@@ -5069,37 +8879,150 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],56:[function(require,module,exports){
+},{}],78:[function(require,module,exports){
+module.exports = function(hljs) {
+  var KEYWORDS = {
+    keyword:
+      'module use_module import_module include_module end_module initialise ' +
+      'mutable initialize finalize finalise interface implementation pred ' +
+      'mode func type inst solver any_pred any_func is semidet det nondet ' +
+      'multi erroneous failure cc_nondet cc_multi typeclass instance where ' +
+      'pragma promise external trace atomic or_else require_complete_switch ' +
+      'require_det require_semidet require_multi require_nondet ' +
+      'require_cc_multi require_cc_nondet require_erroneous require_failure',
+    pragma:
+      'inline no_inline type_spec source_file fact_table obsolete memo ' +
+      'loop_check minimal_model terminates does_not_terminate ' +
+      'check_termination promise_equivalent_clauses',
+    preprocessor:
+      'foreign_proc foreign_decl foreign_code foreign_type ' +
+      'foreign_import_module foreign_export_enum foreign_export ' +
+      'foreign_enum may_call_mercury will_not_call_mercury thread_safe ' +
+      'not_thread_safe maybe_thread_safe promise_pure promise_semipure ' +
+      'tabled_for_io local untrailed trailed attach_to_io_state ' +
+      'can_pass_as_mercury_type stable will_not_throw_exception ' +
+      'may_modify_trail will_not_modify_trail may_duplicate ' +
+      'may_not_duplicate affects_liveness does_not_affect_liveness ' +
+      'doesnt_affect_liveness no_sharing unknown_sharing sharing',
+    built_in:
+      'some all not if then else true fail false try catch catch_any ' +
+      'semidet_true semidet_false semidet_fail impure_true impure semipure'
+  };
+
+  var TODO = {
+    className: 'label',
+    begin: 'XXX', end: '$', endsWithParent: true,
+    relevance: 0
+  };
+  var COMMENT = hljs.inherit(hljs.C_LINE_COMMENT_MODE, {begin: '%'});
+  var CCOMMENT = hljs.inherit(hljs.C_BLOCK_COMMENT_MODE, {relevance: 0});
+  COMMENT.contains.push(TODO);
+  CCOMMENT.contains.push(TODO);
+
+  var NUMCODE = {
+    className: 'number',
+    begin: "0'.\\|0[box][0-9a-fA-F]*"
+  };
+
+  var ATOM = hljs.inherit(hljs.APOS_STRING_MODE, {relevance: 0});
+  var STRING = hljs.inherit(hljs.QUOTE_STRING_MODE, {relevance: 0});
+  var STRING_FMT = {
+    className: 'constant',
+    begin: '\\\\[abfnrtv]\\|\\\\x[0-9a-fA-F]*\\\\\\|%[-+# *.0-9]*[dioxXucsfeEgGp]',
+    relevance: 0
+  };
+  STRING.contains.push(STRING_FMT);
+
+  var IMPLICATION = {
+    className: 'built_in',
+    variants: [
+      {begin: '<=>'},
+      {begin: '<=', relevance: 0},
+      {begin: '=>', relevance: 0},
+      {begin: '/\\\\'},
+      {begin: '\\\\/'}
+    ]
+  };
+
+  var HEAD_BODY_CONJUNCTION = {
+    className: 'built_in',
+    variants: [
+      {begin: ':-\\|-->'},
+      {begin: '=', relevance: 0}
+    ]
+  };
+
+  return {
+    aliases: ['m', 'moo'],
+    keywords: KEYWORDS,
+    contains: [
+      IMPLICATION,
+      HEAD_BODY_CONJUNCTION,
+      COMMENT,
+      CCOMMENT,
+      NUMCODE,
+      hljs.NUMBER_MODE,
+      ATOM,
+      STRING,
+      {begin: /:-/} // relevance booster
+    ]
+  };
+};
+},{}],79:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
-    keywords: [
-      "environ vocabularies notations constructors definitions registrations theorems schemes requirements",
-      "begin end definition registration cluster existence pred func defpred deffunc theorem proof",
-      "let take assume then thus hence ex for st holds consider reconsider such that and in provided of as from",
-      "be being by means equals implies iff redefine define now not or attr is mode suppose per cases set",
-      "thesis contradiction scheme reserve struct",
-      "correctness compatibility coherence symmetry assymetry reflexivity irreflexivity",
-      "connectedness uniqueness commutativity idempotence involutiveness projectivity"
-    ].join(" "),
+    keywords:
+      'environ vocabularies notations constructors definitions ' +
+      'registrations theorems schemes requirements begin end definition ' +
+      'registration cluster existence pred func defpred deffunc theorem ' +
+      'proof let take assume then thus hence ex for st holds consider ' +
+      'reconsider such that and in provided of as from be being by means ' +
+      'equals implies iff redefine define now not or attr is mode ' +
+      'suppose per cases set thesis contradiction scheme reserve struct ' +
+      'correctness compatibility coherence symmetry assymetry ' +
+      'reflexivity irreflexivity connectedness uniqueness commutativity ' +
+      'idempotence involutiveness projectivity',
+    contains: [
+      hljs.COMMENT('::', '$')
+    ]
+  };
+};
+},{}],80:[function(require,module,exports){
+module.exports = function(hljs) {
+  return {
+    subLanguage: 'xml',
     contains: [
       {
-        className: "comment",
-        begin: "::", end: "$"
+        className: 'preprocessor',
+        begin: '^__(END|DATA)__$'
+      },
+    // mojolicious line
+      {
+        begin: "^\\s*%{1,2}={0,2}", end: '$',
+        subLanguage: 'perl'
+      },
+    // mojolicious block
+      {
+        begin: "<%{1,2}={0,2}",
+        end: "={0,1}%>",
+        subLanguage: 'perl',
+        excludeBegin: true,
+        excludeEnd: true
       }
     ]
   };
 };
-},{}],57:[function(require,module,exports){
+},{}],81:[function(require,module,exports){
 module.exports = function(hljs) {
   var NUMBER = {
+    className: 'number', relevance: 0,
     variants: [
       {
-        className: 'number',
         begin: '[$][a-fA-F0-9]+'
       },
       hljs.NUMBER_MODE
     ]
-  }
+  };
 
   return {
     case_insensitive: true,
@@ -5113,22 +9036,22 @@ module.exports = function(hljs) {
 
       literal: 'true false null and or shl shr mod'
     },
+    illegal: /\/\*/,
     contains: [
-      {
-        className: 'comment',
-        begin: '#rem', end: '#end'
-      },
-      {
-        className: 'comment',
-        begin: "'", end: '$',
-        relevance: 0
-      },
+      hljs.COMMENT('#rem', '#end'),
+      hljs.COMMENT(
+        "'",
+        '$',
+        {
+          relevance: 0
+        }
+      ),
       {
         className: 'function',
         beginKeywords: 'function method', end: '[(=:]|$',
         illegal: /\n/,
         contains: [
-          hljs.UNDERSCORE_TITLE_MODE,
+          hljs.UNDERSCORE_TITLE_MODE
         ]
       },
       {
@@ -5168,7 +9091,7 @@ module.exports = function(hljs) {
     ]
   }
 };
-},{}],58:[function(require,module,exports){
+},{}],82:[function(require,module,exports){
 module.exports = function(hljs) {
   var VAR = {
     className: 'variable',
@@ -5250,11 +9173,12 @@ module.exports = function(hljs) {
     illegal: '[^\\s\\}]'
   };
 };
-},{}],59:[function(require,module,exports){
+},{}],83:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
+    aliases: ['nim'],
     keywords: {
-      keyword: 'addr and as asm bind block break|0 case|0 cast const|0 continue|0 converter discard distinct|10 div do elif else|0 end|0 enum|0 except export finally for from generic if|0 import|0 in include|0 interface is isnot|10 iterator|10 let|0 macro method|10 mixin mod nil not notin|10 object|0 of or out proc|10 ptr raise ref|10 return shl shr static template|10 try|0 tuple type|0 using|0 var|0 when while|0 with without xor yield',
+      keyword: 'addr and as asm bind block break|0 case|0 cast const|0 continue|0 converter discard distinct|10 div do elif else|0 end|0 enum|0 except export finally for from generic if|0 import|0 in include|0 interface is isnot|10 iterator|10 let|0 macro method|10 mixin mod nil not notin|10 object|0 of or out proc|10 ptr raise ref|10 return shl shr static template try|0 tuple type|0 using|0 var|0 when while|0 with without xor yield',
       literal: 'shared guarded stdin stdout stderr result|10 true false'
     },
     contains: [ {
@@ -5271,13 +9195,9 @@ module.exports = function(hljs) {
         className: 'string',
         begin: /([a-zA-Z]\w*)?"""/,
         end: /"""/
-      }, {
-        className: 'string',
-        begin: /"/,
-        end: /"/,
-        illegal: /\n/,
-        contains: [{begin: /\\./}]
-      }, {
+      },
+      hljs.QUOTE_STRING_MODE,
+      {
         className: 'type',
         begin: /\b[A-Z]\w+\b/,
         relevance: 0
@@ -5305,7 +9225,7 @@ module.exports = function(hljs) {
     ]
   }
 };
-},{}],60:[function(require,module,exports){
+},{}],84:[function(require,module,exports){
 module.exports = function(hljs) {
   var NIX_KEYWORDS = {
     keyword: 'rec with let in inherit assert if else then',
@@ -5316,13 +9236,14 @@ module.exports = function(hljs) {
   var ANTIQUOTE = {
     className: 'subst',
     begin: /\$\{/,
-    end: /\}/,
+    end: /}/,
     keywords: NIX_KEYWORDS
   };
   var ATTRS = {
     className: 'variable',
     // TODO: we have to figure out a way how to exclude \s*=
-    begin: /[a-zA-Z0-9-_]+(\s*=)/
+    begin: /[a-zA-Z0-9-_]+(\s*=)/,
+    relevance: 0
   };
   var SINGLE_QUOTE = {
     className: 'string',
@@ -5347,7 +9268,7 @@ module.exports = function(hljs) {
     SINGLE_QUOTE,
     DOUBLE_QUOTE,
     ATTRS
-  ];  
+  ];
   ANTIQUOTE.contains = EXPRESSIONS;
   return {
     aliases: ["nixos"],
@@ -5355,7 +9276,7 @@ module.exports = function(hljs) {
     contains: EXPRESSIONS
   };
 };
-},{}],61:[function(require,module,exports){
+},{}],85:[function(require,module,exports){
 module.exports = function(hljs) {
   var CONSTANTS = {
     className: 'symbol',
@@ -5390,7 +9311,7 @@ module.exports = function(hljs) {
   var COMPILER ={
     // !compiler_flags
     className: 'constant',
-    begin: '\\!(addincludedir|addplugindir|appendfile|cd|define|delfile|echo|else|endif|error|execute|finalize|getdllversionsystem|ifdef|ifmacrodef|ifmacrondef|ifndef|if|include|insertmacro|macroend|macro|packhdr|searchparse|searchreplace|tempfile|undef|verbose|warning)'
+    begin: '\\!(addincludedir|addplugindir|appendfile|cd|define|delfile|echo|else|endif|error|execute|finalize|getdllversionsystem|ifdef|ifmacrodef|ifmacrondef|ifndef|if|include|insertmacro|macroend|macro|makensis|packhdr|searchparse|searchreplace|tempfile|undef|verbose|warning)'
   };
 
   return {
@@ -5419,11 +9340,13 @@ module.exports = function(hljs) {
           LANGUAGES
         ]
       },
-      { // line comments
-        className: 'comment',
-        begin: ';', end: '$',
-        relevance: 0
-      },
+      hljs.COMMENT(
+        ';',
+        '$',
+        {
+          relevance: 0
+        }
+      ),
       {
         className: 'function',
         beginKeywords: 'Function PageEx Section SectionGroup SubSection', end: '$'
@@ -5441,8 +9364,12 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],62:[function(require,module,exports){
+},{}],86:[function(require,module,exports){
 module.exports = function(hljs) {
+  var API_CLASS = {
+    className: 'built_in',
+    begin: '(AV|CA|CF|CG|CI|MK|MP|NS|UI)\\w+',
+  };
   var OBJC_KEYWORDS = {
     keyword:
       'int float while char export sizeof typedef const struct for union ' +
@@ -5455,31 +9382,19 @@ module.exports = function(hljs) {
       '@private @protected @public @try @property @end @throw @catch @finally ' +
       '@autoreleasepool @synthesize @dynamic @selector @optional @required',
     literal:
-    	'false true FALSE TRUE nil YES NO NULL',
+      'false true FALSE TRUE nil YES NO NULL',
     built_in:
-      'NSString NSData NSDictionary CGRect CGPoint UIButton UILabel UITextView UIWebView MKMapView ' +
-      'NSView NSViewController NSWindow NSWindowController NSSet NSUUID NSIndexSet ' +
-      'UISegmentedControl NSObject UITableViewDelegate UITableViewDataSource NSThread ' +
-      'UIActivityIndicator UITabbar UIToolBar UIBarButtonItem UIImageView NSAutoreleasePool ' +
-      'UITableView BOOL NSInteger CGFloat NSException NSLog NSMutableString NSMutableArray ' +
-      'NSMutableDictionary NSURL NSIndexPath CGSize UITableViewCell UIView UIViewController ' +
-      'UINavigationBar UINavigationController UITabBarController UIPopoverController ' +
-      'UIPopoverControllerDelegate UIImage NSNumber UISearchBar NSFetchedResultsController ' +
-      'NSFetchedResultsChangeType UIScrollView UIScrollViewDelegate UIEdgeInsets UIColor ' +
-      'UIFont UIApplication NSNotFound NSNotificationCenter NSNotification ' +
-      'UILocalNotification NSBundle NSFileManager NSTimeInterval NSDate NSCalendar ' +
-      'NSUserDefaults UIWindow NSRange NSArray NSError NSURLRequest NSURLConnection ' +
-      'NSURLSession NSURLSessionDataTask NSURLSessionDownloadTask NSURLSessionUploadTask NSURLResponse' +
-      'UIInterfaceOrientation MPMoviePlayerController dispatch_once_t ' +
-      'dispatch_queue_t dispatch_sync dispatch_async dispatch_once'
+      'BOOL dispatch_once_t dispatch_queue_t dispatch_sync dispatch_async dispatch_once'
   };
   var LEXEMES = /[a-zA-Z@][a-zA-Z0-9_]*/;
   var CLASS_KEYWORDS = '@interface @class @protocol @implementation';
   return {
-    aliases: ['m', 'mm', 'objc', 'obj-c'],
-    keywords: OBJC_KEYWORDS, lexemes: LEXEMES,
+    aliases: ['mm', 'objc', 'obj-c'],
+    keywords: OBJC_KEYWORDS,
+    lexemes: LEXEMES,
     illegal: '</',
     contains: [
+      API_CLASS,
       hljs.C_LINE_COMMENT_MODE,
       hljs.C_BLOCK_COMMENT_MODE,
       hljs.C_NUMBER_MODE,
@@ -5528,51 +9443,136 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],63:[function(require,module,exports){
+},{}],87:[function(require,module,exports){
 module.exports = function(hljs) {
+  /* missing support for heredoc-like string (OCaml 4.0.2+) */
   return {
     aliases: ['ml'],
     keywords: {
       keyword:
         'and as assert asr begin class constraint do done downto else end ' +
-        'exception external false for fun function functor if in include ' +
-        'inherit initializer land lazy let lor lsl lsr lxor match method ' +
-        'mod module mutable new object of open or private rec ref sig struct ' +
-        'then to true try type val virtual when while with parser value',
+        'exception external for fun function functor if in include ' +
+        'inherit! inherit initializer land lazy let lor lsl lsr lxor match method!|10 method ' +
+        'mod module mutable new object of open! open or private rec sig struct ' +
+        'then to try type val! val virtual when while with ' +
+        /* camlp4 */
+        'parser value',
       built_in:
-        'bool char float int list unit array exn option int32 int64 nativeint ' +
-        'format4 format6 lazy_t in_channel out_channel string'
+        /* built-in types */
+        'array bool bytes char exn|5 float int int32 int64 list lazy_t|5 nativeint|5 string unit ' +
+        /* (some) types in Pervasives */
+        'in_channel out_channel ref',
+      literal:
+        'true false'
     },
-    illegal: /\/\//,
+    illegal: /\/\/|>>/,
+    lexemes: '[a-z_]\\w*!?',
     contains: [
       {
-        className: 'string',
-        begin: '"""', end: '"""'
+        className: 'literal',
+        begin: '\\[(\\|\\|)?\\]|\\(\\)',
+        relevance: 0
       },
-      {
-        className: 'comment',
-        begin: '\\(\\*', end: '\\*\\)',
-        contains: ['self']
+      hljs.COMMENT(
+        '\\(\\*',
+        '\\*\\)',
+        {
+          contains: ['self']
+        }
+      ),
+      { /* type variable */
+        className: 'symbol',
+        begin: '\'[A-Za-z_](?!\')[\\w\']*'
+        /* the grammar is ambiguous on how 'a'b should be interpreted but not the compiler */
       },
-      {
-        className: 'class',
-        beginKeywords: 'type', end: '\\(|=|$', excludeEnd: true,
-        contains: [
-          hljs.UNDERSCORE_TITLE_MODE
-        ]
+      { /* polymorphic variant */
+        className: 'tag',
+        begin: '`[A-Z][\\w\']*'
       },
-      {
-        className: 'annotation',
-        begin: '\\[<', end: '>\\]'
+      { /* module or constructor */
+        className: 'type',
+        begin: '\\b[A-Z][\\w\']*',
+        relevance: 0
       },
-      hljs.C_BLOCK_COMMENT_MODE,
-      hljs.inherit(hljs.APOS_STRING_MODE, {illegal: null}),
+      { /* don't color identifiers, but safely catch all identifiers with '*/
+        begin: '[a-z_]\\w*\'[\\w\']*'
+      },
+      hljs.inherit(hljs.APOS_STRING_MODE, {className: 'char', relevance: 0}),
       hljs.inherit(hljs.QUOTE_STRING_MODE, {illegal: null}),
-      hljs.C_NUMBER_MODE
+      {
+        className: 'number',
+        begin:
+          '\\b(0[xX][a-fA-F0-9_]+[Lln]?|' +
+          '0[oO][0-7_]+[Lln]?|' +
+          '0[bB][01_]+[Lln]?|' +
+          '[0-9][0-9_]*([Lln]|(\\.[0-9_]*)?([eE][-+]?[0-9_]+)?)?)',
+        relevance: 0
+      },
+      {
+        begin: /[-=]>/ // relevance booster
+      }
     ]
   }
 };
-},{}],64:[function(require,module,exports){
+},{}],88:[function(require,module,exports){
+module.exports = function(hljs) {
+	var SPECIAL_VARS = {
+		className: 'keyword',
+		begin: '\\$(f[asn]|t|vp[rtd]|children)'
+	},
+	LITERALS = {
+		className: 'literal',
+		begin: 'false|true|PI|undef'
+	},
+	NUMBERS = {
+		className: 'number',
+		begin: '\\b\\d+(\\.\\d+)?(e-?\\d+)?', //adds 1e5, 1e-10
+		relevance: 0
+	},
+	STRING = hljs.inherit(hljs.QUOTE_STRING_MODE,{illegal: null}),
+	PREPRO = {
+		className: 'preprocessor',
+		keywords: 'include use',
+		begin: 'include|use <',
+		end: '>'
+	},
+	PARAMS = {
+		className: 'params',
+		begin: '\\(', end: '\\)',
+		contains: ['self', NUMBERS, STRING, SPECIAL_VARS, LITERALS]
+	},
+	MODIFIERS = {
+		className: 'built_in',
+		begin: '[*!#%]',
+		relevance: 0
+	},
+	FUNCTIONS = {
+		className: 'function',
+		beginKeywords: 'module function',
+		end: '\\=|\\{',
+		contains: [PARAMS, hljs.UNDERSCORE_TITLE_MODE]
+	};
+
+	return {
+		aliases: ['scad'],
+		keywords: {
+			keyword: 'function module include use for intersection_for if else \\%',
+			literal: 'false true PI undef',
+			built_in: 'circle square polygon text sphere cube cylinder polyhedron translate rotate scale resize mirror multmatrix color offset hull minkowski union difference intersection abs sign sin cos tan acos asin atan atan2 floor round ceil ln log pow sqrt exp rands min max concat lookup str chr search version version_num norm cross parent_module echo import import_dxf dxf_linear_extrude linear_extrude rotate_extrude surface projection render children dxf_cross dxf_dim let assign'
+		},
+		contains: [
+			hljs.C_LINE_COMMENT_MODE,
+			hljs.C_BLOCK_COMMENT_MODE,
+			NUMBERS,
+			PREPRO,
+			STRING,
+			SPECIAL_VARS,
+			MODIFIERS,
+			FUNCTIONS
+		]
+	}
+};
+},{}],89:[function(require,module,exports){
 module.exports = function(hljs) {
   var OXYGENE_KEYWORDS = 'abstract add and array as asc aspect assembly async begin break block by case class concat const copy constructor continue '+
     'create default delegate desc distinct div do downto dynamic each else empty end ensure enum equals event except exit extension external false '+
@@ -5582,16 +9582,20 @@ module.exports = function(hljs) {
     'record reintroduce remove repeat require result reverse sealed select self sequence set shl shr skip static step soft take then to true try tuple '+
     'type union unit unsafe until uses using var virtual raises volatile where while with write xor yield await mapped deprecated stdcall cdecl pascal '+
     'register safecall overload library platform reference packed strict published autoreleasepool selector strong weak unretained';
-  var CURLY_COMMENT =  {
-    className: 'comment',
-    begin: '{', end: '}',
-    relevance: 0
-  };
-  var PAREN_COMMENT = {
-    className: 'comment',
-    begin: '\\(\\*', end: '\\*\\)',
-    relevance: 10
-  };
+  var CURLY_COMMENT =  hljs.COMMENT(
+    '{',
+    '}',
+    {
+      relevance: 0
+    }
+  );
+  var PAREN_COMMENT = hljs.COMMENT(
+    '\\(\\*',
+    '\\*\\)',
+    {
+      relevance: 10
+    }
+  );
   var STRING = {
     className: 'string',
     begin: '\'', end: '\'',
@@ -5618,7 +9622,7 @@ module.exports = function(hljs) {
   return {
     case_insensitive: true,
     keywords: OXYGENE_KEYWORDS,
-    illegal: '("|\\$[G-Zg-z]|\\/\\*|</)',
+    illegal: '("|\\$[G-Zg-z]|\\/\\*|</|=>|->)',
     contains: [
       CURLY_COMMENT, PAREN_COMMENT, hljs.C_LINE_COMMENT_MODE,
       STRING, CHAR_STRING,
@@ -5637,26 +9641,29 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],65:[function(require,module,exports){
+},{}],90:[function(require,module,exports){
 module.exports = function(hljs) {
+  var CURLY_SUBCOMMENT = hljs.COMMENT(
+    '{',
+    '}',
+    {
+      contains: ['self']
+    }
+  );
   return {
     subLanguage: 'xml', relevance: 0,
     contains: [
-      {
-        className: 'comment',
-        begin: '^#', end: '$'
-      },
-      {
-        className: 'comment',
-        begin: '\\^rem{', end: '}',
-        relevance: 10,
-        contains: [
-          {
-            begin: '{', end: '}',
-            contains: ['self']
-          }
-        ]
-      },
+      hljs.COMMENT('^#', '$'),
+      hljs.COMMENT(
+        '\\^rem{',
+        '}',
+        {
+          relevance: 10,
+          contains: [
+            CURLY_SUBCOMMENT
+          ]
+        }
+      ),
       {
         className: 'preprocessor',
         begin: '^@(?:BASE|USE|CLASS|OPTIONS)$',
@@ -5682,7 +9689,7 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],66:[function(require,module,exports){
+},{}],91:[function(require,module,exports){
 module.exports = function(hljs) {
   var PERL_KEYWORDS = 'getpwent getservent quotemeta msgrcv scalar kill dbmclose undef lc ' +
     'ma syswrite tr send umask sysopen shmwrite vec qx utime local oct semctl localtime ' +
@@ -5716,24 +9723,21 @@ module.exports = function(hljs) {
     className: 'variable',
     variants: [
       {begin: /\$\d/},
-      {begin: /[\$\%\@](\^\w\b|#\w+(\:\:\w+)*|{\w+}|\w+(\:\:\w*)*)/},
-      {begin: /[\$\%\@][^\s\w{]/, relevance: 0}
+      {begin: /[\$%@](\^\w\b|#\w+(::\w+)*|{\w+}|\w+(::\w*)*)/},
+      {begin: /[\$%@][^\s\w{]/, relevance: 0}
     ]
-  };
-  var COMMENT = {
-    className: 'comment',
-    begin: '^(__END__|__DATA__)', end: '\\n$',
-    relevance: 5
   };
   var STRING_CONTAINS = [hljs.BACKSLASH_ESCAPE, SUBST, VAR];
   var PERL_DEFAULT_CONTAINS = [
     VAR,
     hljs.HASH_COMMENT_MODE,
-    COMMENT,
-    {
-      className: 'comment',
-      begin: '^\\=\\w', end: '\\=cut', endsWithParent: true
-    },
+    hljs.COMMENT(
+      '^\\=\\w',
+      '\\=cut',
+      {
+        endsWithParent: true
+      }
+    ),
     METHOD,
     {
       className: 'string',
@@ -5797,7 +9801,6 @@ module.exports = function(hljs) {
       relevance: 0,
       contains: [
         hljs.HASH_COMMENT_MODE,
-        COMMENT,
         {
           className: 'regexp',
           begin: '(s|tr|y)/(\\\\.|[^/])*/(\\\\.|[^/])*/[a-z]*',
@@ -5820,6 +9823,18 @@ module.exports = function(hljs) {
       className: 'operator',
       begin: '-\\w\\b',
       relevance: 0
+    },
+    {
+      begin: "^__DATA__$",
+      end: "^__END__$",
+      subLanguage: 'mojolicious',
+      contains: [
+        {
+            begin: "^@@.*",
+            end: "$",
+            className: "comment"
+        }
+      ]
     }
   ];
   SUBST.contains = PERL_DEFAULT_CONTAINS;
@@ -5831,10 +9846,62 @@ module.exports = function(hljs) {
     contains: PERL_DEFAULT_CONTAINS
   };
 };
-},{}],67:[function(require,module,exports){
+},{}],92:[function(require,module,exports){
+module.exports = function(hljs) {
+  var MACRO = {
+    className: 'variable',
+    begin: /\$[\w\d#@][\w\d_]*/
+  };
+  var TABLE = {
+    className: 'variable',
+    begin: /</, end: />/
+  };
+  var QUOTE_STRING = {
+    className: 'string',
+    begin: /"/, end: /"/
+  };
+
+  return {
+    aliases: ['pf.conf'],
+    lexemes: /[a-z0-9_<>-]+/,
+    keywords: {
+      built_in: /* block match pass are "actions" in pf.conf(5), the rest are
+                 * lexically similar top-level commands.
+                 */
+        'block match pass load anchor|5 antispoof|10 set table',
+      keyword:
+        'in out log quick on rdomain inet inet6 proto from port os to route' +
+        'allow-opts divert-packet divert-reply divert-to flags group icmp-type' +
+        'icmp6-type label once probability recieved-on rtable prio queue' +
+        'tos tag tagged user keep fragment for os drop' +
+        'af-to|10 binat-to|10 nat-to|10 rdr-to|10 bitmask least-stats random round-robin' +
+        'source-hash static-port' +
+        'dup-to reply-to route-to' +
+        'parent bandwidth default min max qlimit' +
+        'block-policy debug fingerprints hostid limit loginterface optimization' +
+        'reassemble ruleset-optimization basic none profile skip state-defaults' +
+        'state-policy timeout' +
+        'const counters persist' +
+        'no modulate synproxy state|5 floating if-bound no-sync pflow|10 sloppy' +
+        'source-track global rule max-src-nodes max-src-states max-src-conn' +
+        'max-src-conn-rate overload flush' +
+        'scrub|5 max-mss min-ttl no-df|10 random-id',
+      literal:
+        'all any no-route self urpf-failed egress|5 unknown'
+    },
+    contains: [
+      hljs.HASH_COMMENT_MODE,
+      hljs.NUMBER_MODE,
+      hljs.QUOTE_STRING_MODE,
+      MACRO,
+      TABLE
+    ]
+  };
+};
+},{}],93:[function(require,module,exports){
 module.exports = function(hljs) {
   var VARIABLE = {
-    className: 'variable', begin: '(\\$|->)+[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'
+    className: 'variable', begin: '\\$+[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'
   };
   var PREPROCESSOR = {
     className: 'preprocessor', begin: /<\?(php)?|\?>/
@@ -5869,29 +9936,48 @@ module.exports = function(hljs) {
     contains: [
       hljs.C_LINE_COMMENT_MODE,
       hljs.HASH_COMMENT_MODE,
-      {
-        className: 'comment',
-        begin: '/\\*', end: '\\*/',
-        contains: [
-          {
-            className: 'phpdoc',
-            begin: '\\s@[A-Za-z]+'
-          },
-          PREPROCESSOR
-        ]
-      },
-      {
-          className: 'comment',
-          begin: '__halt_compiler.+?;', endsWithParent: true,
-          keywords: '__halt_compiler', lexemes: hljs.UNDERSCORE_IDENT_RE
-      },
+      hljs.COMMENT(
+        '/\\*',
+        '\\*/',
+        {
+          contains: [
+            {
+              className: 'doctag',
+              begin: '@[A-Za-z]+'
+            },
+            PREPROCESSOR
+          ]
+        }
+      ),
+      hljs.COMMENT(
+        '__halt_compiler.+?;',
+        false,
+        {
+          endsWithParent: true,
+          keywords: '__halt_compiler',
+          lexemes: hljs.UNDERSCORE_IDENT_RE
+        }
+      ),
       {
         className: 'string',
-        begin: '<<<[\'"]?\\w+[\'"]?$', end: '^\\w+;',
-        contains: [hljs.BACKSLASH_ESCAPE]
+        begin: /<<<['"]?\w+['"]?$/, end: /^\w+;?$/,
+        contains: [
+          hljs.BACKSLASH_ESCAPE,
+          {
+            className: 'subst',
+            variants: [
+              {begin: /\$\w+/},
+              {begin: /\{\$/, end: /\}/}
+            ]
+          }
+        ]
       },
       PREPROCESSOR,
       VARIABLE,
+      {
+        // swallow composed identifiers to avoid parsing them as keywords
+        begin: /(::|->)+[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*/
+      },
       {
         className: 'function',
         beginKeywords: 'function', end: /[;{]/, excludeEnd: true,
@@ -5937,7 +10023,103 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],68:[function(require,module,exports){
+},{}],94:[function(require,module,exports){
+module.exports = function(hljs) {
+  var backtickEscape = {
+    begin: '`[\\s\\S]',
+    relevance: 0
+  };
+  var VAR = {
+    className: 'variable',
+    variants: [
+      {begin: /\$[\w\d][\w\d_:]*/}
+    ]
+  };
+  var QUOTE_STRING = {
+    className: 'string',
+    begin: /"/, end: /"/,
+    contains: [
+      backtickEscape,
+      VAR,
+      {
+        className: 'variable',
+        begin: /\$[A-z]/, end: /[^A-z]/
+      }
+    ]
+  };
+  var APOS_STRING = {
+    className: 'string',
+    begin: /'/, end: /'/
+  };
+
+  return {
+    aliases: ['ps'],
+    lexemes: /-?[A-z\.\-]+/,
+    case_insensitive: true,
+    keywords: {
+      keyword: 'if else foreach return function do while until elseif begin for trap data dynamicparam end break throw param continue finally in switch exit filter try process catch',
+      literal: '$null $true $false',
+      built_in: 'Add-Content Add-History Add-Member Add-PSSnapin Clear-Content Clear-Item Clear-Item Property Clear-Variable Compare-Object ConvertFrom-SecureString Convert-Path ConvertTo-Html ConvertTo-SecureString Copy-Item Copy-ItemProperty Export-Alias Export-Clixml Export-Console Export-Csv ForEach-Object Format-Custom Format-List Format-Table Format-Wide Get-Acl Get-Alias Get-AuthenticodeSignature Get-ChildItem Get-Command Get-Content Get-Credential Get-Culture Get-Date Get-EventLog Get-ExecutionPolicy Get-Help Get-History Get-Host Get-Item Get-ItemProperty Get-Location Get-Member Get-PfxCertificate Get-Process Get-PSDrive Get-PSProvider Get-PSSnapin Get-Service Get-TraceSource Get-UICulture Get-Unique Get-Variable Get-WmiObject Group-Object Import-Alias Import-Clixml Import-Csv Invoke-Expression Invoke-History Invoke-Item Join-Path Measure-Command Measure-Object Move-Item Move-ItemProperty New-Alias New-Item New-ItemProperty New-Object New-PSDrive New-Service New-TimeSpan New-Variable Out-Default Out-File Out-Host Out-Null Out-Printer Out-String Pop-Location Push-Location Read-Host Remove-Item Remove-ItemProperty Remove-PSDrive Remove-PSSnapin Remove-Variable Rename-Item Rename-ItemProperty Resolve-Path Restart-Service Resume-Service Select-Object Select-String Set-Acl Set-Alias Set-AuthenticodeSignature Set-Content Set-Date Set-ExecutionPolicy Set-Item Set-ItemProperty Set-Location Set-PSDebug Set-Service Set-TraceSource Set-Variable Sort-Object Split-Path Start-Service Start-Sleep Start-Transcript Stop-Process Stop-Service Stop-Transcript Suspend-Service Tee-Object Test-Path Trace-Command Update-FormatData Update-TypeData Where-Object Write-Debug Write-Error Write-Host Write-Output Write-Progress Write-Verbose Write-Warning',
+      operator: '-ne -eq -lt -gt -ge -le -not -like -notlike -match -notmatch -contains -notcontains -in -notin -replace'
+    },
+    contains: [
+      hljs.HASH_COMMENT_MODE,
+      hljs.NUMBER_MODE,
+      QUOTE_STRING,
+      APOS_STRING,
+      VAR
+    ]
+  };
+};
+},{}],95:[function(require,module,exports){
+module.exports = function(hljs) {
+  return {
+    keywords: {
+      keyword: 'BufferedReader PVector PFont PImage PGraphics HashMap boolean byte char color ' +
+        'double float int long String Array FloatDict FloatList IntDict IntList JSONArray JSONObject ' +
+        'Object StringDict StringList Table TableRow XML ' +
+        // Java keywords
+        'false synchronized int abstract float private char boolean static null if const ' +
+        'for true while long throw strictfp finally protected import native final return void ' +
+        'enum else break transient new catch instanceof byte super volatile case assert short ' +
+        'package default double public try this switch continue throws protected public private',
+      constant: 'P2D P3D HALF_PI PI QUARTER_PI TAU TWO_PI',
+      variable: 'displayHeight displayWidth mouseY mouseX mousePressed pmouseX pmouseY key ' +
+        'keyCode pixels focused frameCount frameRate height width',
+      title: 'setup draw',
+      built_in: 'size createGraphics beginDraw createShape loadShape PShape arc ellipse line point ' +
+        'quad rect triangle bezier bezierDetail bezierPoint bezierTangent curve curveDetail curvePoint ' +
+        'curveTangent curveTightness shape shapeMode beginContour beginShape bezierVertex curveVertex ' +
+        'endContour endShape quadraticVertex vertex ellipseMode noSmooth rectMode smooth strokeCap ' +
+        'strokeJoin strokeWeight mouseClicked mouseDragged mouseMoved mousePressed mouseReleased ' +
+        'mouseWheel keyPressed keyPressedkeyReleased keyTyped print println save saveFrame day hour ' +
+        'millis minute month second year background clear colorMode fill noFill noStroke stroke alpha ' +
+        'blue brightness color green hue lerpColor red saturation modelX modelY modelZ screenX screenY ' +
+        'screenZ ambient emissive shininess specular add createImage beginCamera camera endCamera frustum ' +
+        'ortho perspective printCamera printProjection cursor frameRate noCursor exit loop noLoop popStyle ' +
+        'pushStyle redraw binary boolean byte char float hex int str unbinary unhex join match matchAll nf ' +
+        'nfc nfp nfs split splitTokens trim append arrayCopy concat expand reverse shorten sort splice subset ' +
+        'box sphere sphereDetail createInput createReader loadBytes loadJSONArray loadJSONObject loadStrings ' +
+        'loadTable loadXML open parseXML saveTable selectFolder selectInput beginRaw beginRecord createOutput ' +
+        'createWriter endRaw endRecord PrintWritersaveBytes saveJSONArray saveJSONObject saveStream saveStrings ' +
+        'saveXML selectOutput popMatrix printMatrix pushMatrix resetMatrix rotate rotateX rotateY rotateZ scale ' +
+        'shearX shearY translate ambientLight directionalLight lightFalloff lights lightSpecular noLights normal ' +
+        'pointLight spotLight image imageMode loadImage noTint requestImage tint texture textureMode textureWrap ' +
+        'blend copy filter get loadPixels set updatePixels blendMode loadShader PShaderresetShader shader createFont ' +
+        'loadFont text textFont textAlign textLeading textMode textSize textWidth textAscent textDescent abs ceil ' +
+        'constrain dist exp floor lerp log mag map max min norm pow round sq sqrt acos asin atan atan2 cos degrees ' +
+        'radians sin tan noise noiseDetail noiseSeed random randomGaussian randomSeed'
+    },
+    contains: [
+      hljs.C_LINE_COMMENT_MODE,
+      hljs.C_BLOCK_COMMENT_MODE,
+      hljs.APOS_STRING_MODE,
+      hljs.QUOTE_STRING_MODE,
+      hljs.C_NUMBER_MODE
+    ]
+  };
+};
+},{}],96:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     contains: [
@@ -5979,7 +10161,96 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],69:[function(require,module,exports){
+},{}],97:[function(require,module,exports){
+module.exports = function(hljs) {
+
+  var ATOM = {
+
+    className: 'atom',
+    begin: /[a-z][A-Za-z0-9_]*/,
+    relevance: 0
+  };
+
+  var VAR = {
+
+    className: 'name',
+    variants: [
+      {begin: /[A-Z][a-zA-Z0-9_]*/},
+      {begin: /_[A-Za-z0-9_]*/},
+    ],
+    relevance: 0
+  };
+
+  var PARENTED = {
+
+    begin: /\(/,
+    end: /\)/,
+    relevance: 0
+  };
+
+  var LIST = {
+
+    begin: /\[/,
+    end: /\]/
+  };
+
+  var LINE_COMMENT = {
+
+    className: 'comment',
+    begin: /%/, end: /$/,
+    contains: [hljs.PHRASAL_WORDS_MODE]
+  };
+
+  var BACKTICK_STRING = {
+
+    className: 'string',
+    begin: /`/, end: /`/,
+    contains: [hljs.BACKSLASH_ESCAPE]
+  };
+
+  var CHAR_CODE = {
+
+    className: 'string', // 0'a etc.
+    begin: /0\'(\\\'|.)/
+  };
+
+  var SPACE_CODE = {
+
+    className: 'string',
+    begin: /0\'\\s/ // 0'\s
+  };
+
+  var PRED_OP = { // relevance booster
+    begin: /:-/
+  };
+
+  var inner = [
+
+    ATOM,
+    VAR,
+    PARENTED,
+    PRED_OP,
+    LIST,
+    LINE_COMMENT,
+    hljs.C_BLOCK_COMMENT_MODE,
+    hljs.QUOTE_STRING_MODE,
+    hljs.APOS_STRING_MODE,
+    BACKTICK_STRING,
+    CHAR_CODE,
+    SPACE_CODE,
+    hljs.C_NUMBER_MODE
+  ];
+
+  PARENTED.contains = inner;
+  LIST.contains = inner;
+
+  return {
+    contains: inner.concat([
+      {begin: /\.$/} // relevance booster
+    ])
+  };
+};
+},{}],98:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     keywords: {
@@ -6016,7 +10287,115 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],70:[function(require,module,exports){
+},{}],99:[function(require,module,exports){
+module.exports = function(hljs) {
+
+  var PUPPET_KEYWORDS = {
+    keyword:
+    /* language keywords */
+      'and case default else elsif false if in import enherits node or true undef unless main settings $string ',
+    literal:
+    /* metaparameters */
+      'alias audit before loglevel noop require subscribe tag ' +
+    /* normal attributes */
+      'owner ensure group mode name|0 changes context force incl lens load_path onlyif provider returns root show_diff type_check ' +
+      'en_address ip_address realname command environment hour monute month monthday special target weekday '+
+      'creates cwd ogoutput refresh refreshonly tries try_sleep umask backup checksum content ctime force ignore ' +
+      'links mtime purge recurse recurselimit replace selinux_ignore_defaults selrange selrole seltype seluser source ' +
+      'souirce_permissions sourceselect validate_cmd validate_replacement allowdupe attribute_membership auth_membership forcelocal gid '+
+      'ia_load_module members system host_aliases ip allowed_trunk_vlans description device_url duplex encapsulation etherchannel ' +
+      'native_vlan speed principals allow_root auth_class auth_type authenticate_user k_of_n mechanisms rule session_owner shared options ' +
+      'device fstype enable hasrestart directory present absent link atboot blockdevice device dump pass remounts poller_tag use ' +
+      'message withpath adminfile allow_virtual allowcdrom category configfiles flavor install_options instance package_settings platform ' +
+      'responsefile status uninstall_options vendor unless_system_user unless_uid binary control flags hasstatus manifest pattern restart running ' +
+      'start stop allowdupe auths expiry gid groups home iterations key_membership keys managehome membership password password_max_age ' +
+      'password_min_age profile_membership profiles project purge_ssh_keys role_membership roles salt shell uid baseurl cost descr enabled ' +
+      'enablegroups exclude failovermethod gpgcheck gpgkey http_caching include includepkgs keepalive metadata_expire metalink mirrorlist ' +
+      'priority protect proxy proxy_password proxy_username repo_gpgcheck s3_enabled skip_if_unavailable sslcacert sslclientcert sslclientkey ' +
+      'sslverify mounted',
+    built_in:
+    /* core facts */
+      'architecture augeasversion blockdevices boardmanufacturer boardproductname boardserialnumber cfkey dhcp_servers ' +
+      'domain ec2_ ec2_userdata facterversion filesystems ldom fqdn gid hardwareisa hardwaremodel hostname id|0 interfaces '+
+      'ipaddress ipaddress_ ipaddress6 ipaddress6_ iphostnumber is_virtual kernel kernelmajversion kernelrelease kernelversion ' +
+      'kernelrelease kernelversion lsbdistcodename lsbdistdescription lsbdistid lsbdistrelease lsbmajdistrelease lsbminordistrelease ' +
+      'lsbrelease macaddress macaddress_ macosx_buildversion macosx_productname macosx_productversion macosx_productverson_major ' +
+      'macosx_productversion_minor manufacturer memoryfree memorysize netmask metmask_ network_ operatingsystem operatingsystemmajrelease '+
+      'operatingsystemrelease osfamily partitions path physicalprocessorcount processor processorcount productname ps puppetversion '+
+      'rubysitedir rubyversion selinux selinux_config_mode selinux_config_policy selinux_current_mode selinux_current_mode selinux_enforced '+
+      'selinux_policyversion serialnumber sp_ sshdsakey sshecdsakey sshrsakey swapencrypted swapfree swapsize timezone type uniqueid uptime '+
+      'uptime_days uptime_hours uptime_seconds uuid virtual vlans xendomains zfs_version zonenae zones zpool_version'
+  };
+
+  var COMMENT = hljs.COMMENT('#', '$');
+
+  var IDENT_RE = '([A-Za-z_]|::)(\\w|::)*';
+
+  var TITLE = hljs.inherit(hljs.TITLE_MODE, {begin: IDENT_RE});
+
+  var VARIABLE = {className: 'variable', begin: '\\$' + IDENT_RE};
+
+  var STRING = {
+    className: 'string',
+    contains: [hljs.BACKSLASH_ESCAPE, VARIABLE],
+    variants: [
+      {begin: /'/, end: /'/},
+      {begin: /"/, end: /"/}
+    ]
+  };
+
+  return {
+    aliases: ['pp'],
+    contains: [
+      COMMENT,
+      VARIABLE,
+      STRING,
+      {
+        beginKeywords: 'class', end: '\\{|;',
+        illegal: /=/,
+        contains: [TITLE, COMMENT]
+      },
+      {
+        beginKeywords: 'define', end: /\{/,
+        contains: [
+          {
+            className: 'title', begin: hljs.IDENT_RE, endsParent: true
+          }
+        ]
+      },
+      {
+        begin: hljs.IDENT_RE + '\\s+\\{', returnBegin: true,
+        end: /\S/,
+        contains: [
+          {
+            className: 'name',
+            begin: hljs.IDENT_RE
+          },
+          {
+            begin: /\{/, end: /\}/,
+            keywords: PUPPET_KEYWORDS,
+            relevance: 0,
+            contains: [
+              STRING,
+              COMMENT,
+              {
+                begin:'[a-zA-Z_]+\\s*=>'
+              },
+              {
+                className: 'number',
+                begin: '(\\b0[0-7_]+)|(\\b0x[0-9a-fA-F_]+)|(\\b[1-9][0-9_]*(\\.[0-9_]+)?)|[0_]\\b',
+                relevance: 0
+              },
+              VARIABLE
+            ]
+          }
+        ],
+        relevance: 0
+      }
+    ]
+  }
+};
+},{}],100:[function(require,module,exports){
 module.exports = function(hljs) {
   var PROMPT = {
     className: 'prompt',  begin: /^(>>>|\.\.\.) /
@@ -6066,19 +10445,13 @@ module.exports = function(hljs) {
     begin: /\(/, end: /\)/,
     contains: ['self', PROMPT, NUMBER, STRING]
   };
-  var FUNC_CLASS_PROTO = {
-    end: /:/,
-    illegal: /[${=;\n]/,
-    contains: [hljs.UNDERSCORE_TITLE_MODE, PARAMS]
-  };
-
   return {
     aliases: ['py', 'gyp'],
     keywords: {
       keyword:
         'and elif is global as in if from raise for except finally print import pass return ' +
         'exec else break not with class assert yield try while continue del or def lambda ' +
-        'nonlocal|10 None True False',
+        'async await nonlocal|10 None True False',
       built_in:
         'Ellipsis NotImplemented'
     },
@@ -6088,11 +10461,18 @@ module.exports = function(hljs) {
       NUMBER,
       STRING,
       hljs.HASH_COMMENT_MODE,
-      hljs.inherit(FUNC_CLASS_PROTO, {className: 'function', beginKeywords: 'def', relevance: 10}),
-      hljs.inherit(FUNC_CLASS_PROTO, {className: 'class', beginKeywords: 'class'}),
+      {
+        variants: [
+          {className: 'function', beginKeywords: 'def', relevance: 10},
+          {className: 'class', beginKeywords: 'class'}
+        ],
+        end: /:/,
+        illegal: /[${=;\n,]/,
+        contains: [hljs.UNDERSCORE_TITLE_MODE, PARAMS]
+      },
       {
         className: 'decorator',
-        begin: /@/, end: /$/
+        begin: /^[\t ]*@/, end: /$/
       },
       {
         begin: /\b(print|exec)\(/ // don’t highlight keywords-turned-functions in Python 3
@@ -6100,30 +10480,30 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],71:[function(require,module,exports){
+},{}],101:[function(require,module,exports){
 module.exports = function(hljs) {
   var Q_KEYWORDS = {
-  keyword: 
+  keyword:
     'do while select delete by update from',
   constant:
     '0b 1b',
-  built_in: 
+  built_in:
     'neg not null string reciprocal floor ceiling signum mod xbar xlog and or each scan over prior mmu lsq inv md5 ltime gtime count first var dev med cov cor all any rand sums prds mins maxs fills deltas ratios avgs differ prev next rank reverse iasc idesc asc desc msum mcount mavg mdev xrank mmin mmax xprev rotate distinct group where flip type key til get value attr cut set upsert raze union inter except cross sv vs sublist enlist read0 read1 hopen hclose hdel hsym hcount peach system ltrim rtrim trim lower upper ssr view tables views cols xcols keys xkey xcol xasc xdesc fkeys meta lj aj aj0 ij pj asof uj ww wj wj1 fby xgroup ungroup ej save load rsave rload show csv parse eval min max avg wavg wsum sin cos tan sum',
-  typename: 
-    '`float `double int `timestamp `timespan `datetime `time `boolean `symbol `char `byte `short `long `real `month `date `minute `second `guid'    
+  typename:
+    '`float `double int `timestamp `timespan `datetime `time `boolean `symbol `char `byte `short `long `real `month `date `minute `second `guid'
   };
   return {
   aliases:['k', 'kdb'],
-  keywords: Q_KEYWORDS, 
-  lexemes: /\b(`?)[A-Za-z0-9_]+\b/, 
-  contains: [ 
+  keywords: Q_KEYWORDS,
+  lexemes: /\b(`?)[A-Za-z0-9_]+\b/,
+  contains: [
   hljs.C_LINE_COMMENT_MODE,
     hljs.QUOTE_STRING_MODE,
     hljs.C_NUMBER_MODE
      ]
   };
 };
-},{}],72:[function(require,module,exports){
+},{}],102:[function(require,module,exports){
 module.exports = function(hljs) {
   var IDENT_RE = '([a-zA-Z]|\\.[a-zA-Z.])[a-zA-Z0-9._]*';
 
@@ -6135,9 +10515,9 @@ module.exports = function(hljs) {
         lexemes: IDENT_RE,
         keywords: {
           keyword:
-            'function if in break next repeat else for return switch while try tryCatch|10 ' +
+            'function if in break next repeat else for return switch while try tryCatch ' +
             'stop warning require library attach detach source setMethod setGeneric ' +
-            'setGroupGeneric setClass ...|10',
+            'setGroupGeneric setClass ...',
           literal:
             'NULL NA TRUE FALSE T F Inf NaN NA_integer_|10 NA_real_|10 NA_character_|10 ' +
             'NA_complex_|10'
@@ -6193,7 +10573,7 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],73:[function(require,module,exports){
+},{}],103:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     keywords:
@@ -6220,7 +10600,67 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],74:[function(require,module,exports){
+},{}],104:[function(require,module,exports){
+module.exports = function(hljs) {
+  var IDENTIFIER = '[a-zA-Z-_][^\n{\r\n]+\\{';
+
+  return {
+    aliases: ['graph', 'instances'],
+    case_insensitive: true,
+    keywords: 'import',
+    contains: [
+      // Facet sections
+      {
+        className: 'facet',
+        begin: '^facet ' + IDENTIFIER,
+        end: '}',
+        keywords: 'facet installer exports children extends',
+        contains: [
+          hljs.HASH_COMMENT_MODE
+        ]
+      },
+
+      // Instance sections
+      {
+        className: 'instance-of',
+        begin: '^instance of ' + IDENTIFIER,
+        end: '}',
+        keywords: 'name count channels instance-data instance-state instance of',
+        contains: [
+          // Instance overridden properties
+          {
+            className: 'keyword',
+            begin: '[a-zA-Z-_]+( |\t)*:'
+          },
+          hljs.HASH_COMMENT_MODE
+        ]
+      },
+
+      // Component sections
+      {
+        className: 'component',
+        begin: '^' + IDENTIFIER,
+        end: '}',
+        lexemes: '\\(?[a-zA-Z]+\\)?',
+        keywords: 'installer exports children extends imports facets alias (optional)',
+        contains: [
+          // Imported component variables
+          {
+            className: 'string',
+            begin: '\\.[a-zA-Z-_]+',
+            end: '\\s|,|;',
+            excludeEnd: true
+          },
+          hljs.HASH_COMMENT_MODE
+        ]
+      },
+
+      // Comments
+      hljs.HASH_COMMENT_MODE
+    ]
+  };
+};
+},{}],105:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     keywords: {
@@ -6257,7 +10697,7 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],75:[function(require,module,exports){
+},{}],106:[function(require,module,exports){
 module.exports = function(hljs) {
   var RUBY_METHOD_RE = '[a-zA-Z_]\\w*[!?=]?|[-+~]\\@|<<|>>|=~|===?|<=>|[<>]=?|\\*\\*|[-/+%^&*~`|]|\\[\\]=?';
   var RUBY_KEYWORDS =
@@ -6265,30 +10705,31 @@ module.exports = function(hljs) {
     'next until do begin unless END rescue nil else break undef not super class case ' +
     'require yield alias while ensure elsif or include attr_reader attr_writer attr_accessor';
   var YARDOCTAG = {
-    className: 'yardoctag',
+    className: 'doctag',
     begin: '@[A-Za-z]+'
   };
   var IRB_OBJECT = {
     className: 'value',
     begin: '#<', end: '>'
   };
-  var COMMENT = {
-    className: 'comment',
-    variants: [
+  var COMMENT_MODES = [
+    hljs.COMMENT(
+      '#',
+      '$',
       {
-        begin: '#', end: '$',
         contains: [YARDOCTAG]
-      },
+      }
+    ),
+    hljs.COMMENT(
+      '^\\=begin',
+      '^\\=end',
       {
-        begin: '^\\=begin', end: '^\\=end',
         contains: [YARDOCTAG],
         relevance: 10
-      },
-      {
-        begin: '^__END__', end: '\\n$'
       }
-    ]
-  };
+    ),
+    hljs.COMMENT('^__END__', '\\n$')
+  ];
   var SUBST = {
     className: 'subst',
     begin: '#\\{', end: '}',
@@ -6300,14 +10741,15 @@ module.exports = function(hljs) {
     variants: [
       {begin: /'/, end: /'/},
       {begin: /"/, end: /"/},
-      {begin: '%[qw]?\\(', end: '\\)'},
-      {begin: '%[qw]?\\[', end: '\\]'},
-      {begin: '%[qw]?{', end: '}'},
-      {begin: '%[qw]?<', end: '>'},
-      {begin: '%[qw]?/', end: '/'},
-      {begin: '%[qw]?%', end: '%'},
-      {begin: '%[qw]?-', end: '-'},
-      {begin: '%[qw]?\\|', end: '\\|'},
+      {begin: /`/, end: /`/},
+      {begin: '%[qQwWx]?\\(', end: '\\)'},
+      {begin: '%[qQwWx]?\\[', end: '\\]'},
+      {begin: '%[qQwWx]?{', end: '}'},
+      {begin: '%[qQwWx]?<', end: '>'},
+      {begin: '%[qQwWx]?/', end: '/'},
+      {begin: '%[qQwWx]?%', end: '%'},
+      {begin: '%[qQwWx]?-', end: '-'},
+      {begin: '%[qQwWx]?\\|', end: '\\|'},
       {
         // \B in the beginning suppresses recognition of ?-sequences where ?
         // is the last character of a preceding identifier, as in: `func?4`
@@ -6324,7 +10766,6 @@ module.exports = function(hljs) {
   var RUBY_DEFAULT_CONTAINS = [
     STRING,
     IRB_OBJECT,
-    COMMENT,
     {
       className: 'class',
       beginKeywords: 'class module', end: '$|;',
@@ -6338,19 +10779,16 @@ module.exports = function(hljs) {
             className: 'parent',
             begin: '(' + hljs.IDENT_RE + '::)?' + hljs.IDENT_RE
           }]
-        },
-        COMMENT
-      ]
+        }
+      ].concat(COMMENT_MODES)
     },
     {
       className: 'function',
-      beginKeywords: 'def', end: ' |$|;',
-      relevance: 0,
+      beginKeywords: 'def', end: '$|;',
       contains: [
         hljs.inherit(hljs.TITLE_MODE, {begin: RUBY_METHOD_RE}),
-        PARAMS,
-        COMMENT
-      ]
+        PARAMS
+      ].concat(COMMENT_MODES)
     },
     {
       className: 'constant',
@@ -6381,7 +10819,6 @@ module.exports = function(hljs) {
       begin: '(' + hljs.RE_STARTERS_RE + ')\\s*',
       contains: [
         IRB_OBJECT,
-        COMMENT,
         {
           className: 'regexp',
           contains: [hljs.BACKSLASH_ESCAPE, SUBST],
@@ -6394,12 +10831,17 @@ module.exports = function(hljs) {
             {begin: '%r\\[', end: '\\][a-z]*'}
           ]
         }
-      ],
+      ].concat(COMMENT_MODES),
       relevance: 0
     }
-  ];
+  ].concat(COMMENT_MODES);
+
   SUBST.contains = RUBY_DEFAULT_CONTAINS;
   PARAMS.contains = RUBY_DEFAULT_CONTAINS;
+
+  var SIMPLE_PROMPT = "[>?]>";
+  var DEFAULT_PROMPT = "[\\w#]+\\(\\w+\\):\\d+:\\d+>";
+  var RVM_PROMPT = "(\\w+-)?\\d+\\.\\d+\\.\\d(p\\d+)?[^>]+>";
 
   var IRB_DEFAULT = [
     {
@@ -6411,7 +10853,7 @@ module.exports = function(hljs) {
     },
     {
       className: 'prompt',
-      begin: /^\S[^=>\n]*>+/,
+      begin: '^('+SIMPLE_PROMPT+"|"+DEFAULT_PROMPT+'|'+RVM_PROMPT+')',
       starts: {
         end: '$', contains: RUBY_DEFAULT_CONTAINS
       }
@@ -6421,10 +10863,11 @@ module.exports = function(hljs) {
   return {
     aliases: ['rb', 'gemspec', 'podspec', 'thor', 'irb'],
     keywords: RUBY_KEYWORDS,
-    contains: [COMMENT].concat(IRB_DEFAULT).concat(RUBY_DEFAULT_CONTAINS)
+    illegal: /\/\*/,
+    contains: COMMENT_MODES.concat(IRB_DEFAULT).concat(RUBY_DEFAULT_CONTAINS)
   };
 };
-},{}],76:[function(require,module,exports){
+},{}],107:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     keywords: {
@@ -6475,29 +10918,42 @@ module.exports = function(hljs) {
       hljs.APOS_STRING_MODE,
       hljs.QUOTE_STRING_MODE,
       hljs.C_NUMBER_MODE,
-      { className: 'array',
-        begin: '\#[a-zA-Z\ \.]+'
+      {
+        className: 'array',
+        variants: [
+          {begin: '#\\s+[a-zA-Z\\ \\.]*', relevance: 0}, // looks like #-comment
+          {begin: '#[a-zA-Z\\ \\.]+'}
+        ]
       }
     ]
   };
 };
-},{}],77:[function(require,module,exports){
+},{}],108:[function(require,module,exports){
 module.exports = function(hljs) {
+  var NUM_SUFFIX = '([uif](8|16|32|64|size))\?';
+  var BLOCK_COMMENT = hljs.inherit(hljs.C_BLOCK_COMMENT_MODE);
+  BLOCK_COMMENT.contains.push('self');
   return {
     aliases: ['rs'],
     keywords: {
       keyword:
         'alignof as be box break const continue crate do else enum extern ' +
         'false fn for if impl in let loop match mod mut offsetof once priv ' +
-        'proc pub pure ref return self sizeof static struct super trait true ' +
-        'type typeof unsafe unsized use virtual while yield ' +
+        'proc pub pure ref return self Self sizeof static struct super trait true ' +
+        'type typeof unsafe unsized use virtual while where yield ' +
         'int i8 i16 i32 i64 ' +
         'uint u8 u32 u64 ' +
         'float f32 f64 ' +
         'str char bool',
       built_in:
+        // prelude
+        'Copy Send Sized Sync Drop Fn FnMut FnOnce drop Box ToOwned Clone ' +
+        'PartialEq PartialOrd Eq Ord AsRef AsMut Into From Default Iterator ' +
+        'Extend IntoIterator DoubleEndedIterator ExactSizeIterator Option ' +
+        'Some None Result Ok Err SliceConcatExt String ToString Vec ' +
+        // macros
         'assert! assert_eq! bitflags! bytes! cfg! col! concat! concat_idents! ' +
-        'debug_assert! debug_assert_eq! env! fail! file! format! format_args! ' +
+        'debug_assert! debug_assert_eq! env! panic! file! format! format_args! ' +
         'include_bin! include_str! line! local_data_key! module_path! ' +
         'option_env! print! println! select! stringify! try! unimplemented! ' +
         'unreachable! vec! write! writeln!'
@@ -6506,22 +10962,26 @@ module.exports = function(hljs) {
     illegal: '</',
     contains: [
       hljs.C_LINE_COMMENT_MODE,
-      hljs.C_BLOCK_COMMENT_MODE,
+      BLOCK_COMMENT,
       hljs.inherit(hljs.QUOTE_STRING_MODE, {illegal: null}),
       {
         className: 'string',
-        begin: /r(#*)".*?"\1(?!#)/
-      },
-      {
-        className: 'string',
-        begin: /'\\?(x\w{2}|u\w{4}|U\w{8}|.)'/
-      },
-      {
-        begin: /'[a-zA-Z_][a-zA-Z0-9_]*/
+        variants: [
+           { begin: /r(#*)".*?"\1(?!#)/ },
+           { begin: /'\\?(x\w{2}|u\w{4}|U\w{8}|.)'/ },
+           { begin: /'[a-zA-Z_][a-zA-Z0-9_]*/ }
+        ]
       },
       {
         className: 'number',
-        begin: '\\b(0[xb][A-Za-z0-9_]+|[0-9_]+(\\.[0-9_]+)?([uif](8|16|32|64)?)?)',
+        variants: [
+          { begin: '\\b0b([01_]+)' + NUM_SUFFIX },
+          { begin: '\\b0o([0-7_]+)' + NUM_SUFFIX },
+          { begin: '\\b0x([A-Fa-f0-9_]+)' + NUM_SUFFIX },
+          { begin: '\\b(\\d[\\d_]*(\\.[0-9_]+)?([eE][+-]?[0-9_]+)?)' +
+                   NUM_SUFFIX
+          }
+        ],
         relevance: 0
       },
       {
@@ -6531,7 +10991,7 @@ module.exports = function(hljs) {
       },
       {
         className: 'preprocessor',
-        begin: '#\\[', end: '\\]'
+        begin: '#\\!?\\[', end: '\\]'
       },
       {
         beginKeywords: 'type', end: '(=|<)',
@@ -6539,9 +10999,11 @@ module.exports = function(hljs) {
         illegal: '\\S'
       },
       {
-        beginKeywords: 'trait enum', end: '({|<)',
-        contains: [hljs.UNDERSCORE_TITLE_MODE],
-        illegal: '\\S'
+        beginKeywords: 'trait enum', end: '{',
+        contains: [
+          hljs.inherit(hljs.UNDERSCORE_TITLE_MODE, {endsParent: true})
+        ],
+        illegal: '[\\w\\d]'
       },
       {
         begin: hljs.IDENT_RE + '::'
@@ -6552,7 +11014,7 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],78:[function(require,module,exports){
+},{}],109:[function(require,module,exports){
 module.exports = function(hljs) {
 
   var ANNOTATION = {
@@ -6580,7 +11042,7 @@ module.exports = function(hljs) {
     className: 'title',
     begin: /[^0-9\n\t "'(),.`{}\[\]:;][^\n\t "'(),.`{}\[\]:;]+|[^0-9\n\t "'(),.`{}\[\]:;=]/,
     relevance: 0
-  }
+  };
 
   var CLASS = {
     className: 'class',
@@ -6591,19 +11053,9 @@ module.exports = function(hljs) {
 
   var METHOD = {
     className: 'function',
-    beginKeywords: 'def val',
+    beginKeywords: 'def',
     end: /[:={\[(\n;]/,
     contains: [NAME]
-  };
-
-  var JAVADOC = {
-    className: 'javadoc',
-    begin: '/\\*\\*', end: '\\*/',
-    contains: [{
-      className: 'javadoctag',
-      begin: '@[A-Za-z]+'
-    }],
-    relevance: 10
   };
 
   return {
@@ -6625,7 +11077,7 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],79:[function(require,module,exports){
+},{}],110:[function(require,module,exports){
 module.exports = function(hljs) {
   var SCHEME_IDENT_RE = '[^\\(\\)\\[\\]\\{\\}",\'`;#|\\\\\\s]+';
   var SCHEME_SIMPLE_NUMBER_RE = '(\\-|\\+)?\\d+([./]\\d+)?';
@@ -6697,13 +11149,16 @@ module.exports = function(hljs) {
     end: '[^\\\\]"'
   };
 
-  var COMMENT = {
-    className: 'comment',
-    variants: [
-      { begin: ';',  end: '$', relevance: 0 },
-      { begin: '#\\|', end: '\\|#' }
-    ]
-  };
+  var COMMENT_MODES = [
+    hljs.COMMENT(
+      ';',
+      '$',
+      {
+        relevance: 0
+      }
+    ),
+    hljs.COMMENT('#\\|', '\\|#')
+  ];
 
   var IDENT = {
     begin: SCHEME_IDENT_RE,
@@ -6737,14 +11192,14 @@ module.exports = function(hljs) {
     ]
   };
 
-  BODY.contains = [LITERAL, NUMBER, STRING, COMMENT, IDENT, QUOTED_IDENT, LIST];
+  BODY.contains = [LITERAL, NUMBER, STRING, IDENT, QUOTED_IDENT, LIST].concat(COMMENT_MODES);
 
   return {
     illegal: /\S/,
-    contains: [SHEBANG, NUMBER, STRING, COMMENT, QUOTED_IDENT, LIST]
+    contains: [SHEBANG, NUMBER, STRING, QUOTED_IDENT, LIST].concat(COMMENT_MODES)
   };
 };
-},{}],80:[function(require,module,exports){
+},{}],111:[function(require,module,exports){
 module.exports = function(hljs) {
 
   var COMMON_CONTAINS = [
@@ -6795,14 +11250,11 @@ module.exports = function(hljs) {
         relevance: 0,
         contains: COMMON_CONTAINS
       },
-      {
-        className: 'comment',
-        begin: '//', end: '$'
-      }
+      hljs.COMMENT('//', '$')
     ].concat(COMMON_CONTAINS)
   };
 };
-},{}],81:[function(require,module,exports){
+},{}],112:[function(require,module,exports){
 module.exports = function(hljs) {
   var IDENT_RE = '[a-zA-Z-][a-zA-Z0-9_-]*';
   var VARIABLE = {
@@ -6811,7 +11263,7 @@ module.exports = function(hljs) {
   };
   var FUNCTION = {
     className: 'function',
-    begin: IDENT_RE + '\\(', 
+    begin: IDENT_RE + '\\(',
     returnBegin: true,
     excludeEnd: true,
     end: '\\('
@@ -6876,7 +11328,7 @@ module.exports = function(hljs) {
       VARIABLE,
       {
         className: 'attribute',
-        begin: '\\b(z-index|word-wrap|word-spacing|word-break|width|widows|white-space|visibility|vertical-align|unicode-bidi|transition-timing-function|transition-property|transition-duration|transition-delay|transition|transform-style|transform-origin|transform|top|text-underline-position|text-transform|text-shadow|text-rendering|text-overflow|text-indent|text-decoration-style|text-decoration-line|text-decoration-color|text-decoration|text-align-last|text-align|tab-size|table-layout|right|resize|quotes|position|pointer-events|perspective-origin|perspective|page-break-inside|page-break-before|page-break-after|padding-top|padding-right|padding-left|padding-bottom|padding|overflow-y|overflow-x|overflow-wrap|overflow|outline-width|outline-style|outline-offset|outline-color|outline|orphans|order|opacity|object-position|object-fit|normal|none|nav-up|nav-right|nav-left|nav-index|nav-down|min-width|min-height|max-width|max-height|mask|marks|margin-top|margin-right|margin-left|margin-bottom|margin|list-style-type|list-style-position|list-style-image|list-style|line-height|letter-spacing|left|justify-content|initial|inherit|ime-mode|image-orientation|image-resolution|image-rendering|icon|hyphens|height|font-weight|font-variant-ligatures|font-variant|font-style|font-stretch|font-size-adjust|font-size|font-language-override|font-kerning|font-feature-settings|font-family|font|float|flex-wrap|flex-shrink|flex-grow|flex-flow|flex-direction|flex-basis|flex|filter|empty-cells|display|direction|cursor|counter-reset|counter-increment|content|column-width|column-span|column-rule-width|column-rule-style|column-rule-color|column-rule|column-gap|column-fill|column-count|columns|color|clip-path|clip|clear|caption-side|break-inside|break-before|break-after|box-sizing|box-shadow|box-decoration-break|bottom|border-width|border-top-width|border-top-style|border-top-right-radius|border-top-left-radius|border-top-color|border-top|border-style|border-spacing|border-right-width|border-right-style|border-right-color|border-right|border-radius|border-left-width|border-left-style|border-left-color|border-left|border-image-width|border-image-source|border-image-slice|border-image-repeat|border-image-outset|border-image|border-color|border-collapse|border-bottom-width|border-bottom-style|border-bottom-right-radius|border-bottom-left-radius|border-bottom-color|border-bottom|border|background-size|background-repeat|background-position|background-origin|background-image|background-color|background-clip|background-attachment|background|backface-visibility|auto|animation-timing-function|animation-play-state|animation-name|animation-iteration-count|animation-fill-mode|animation-duration|animation-direction|animation-delay|animation|align-self|align-items|align-content)\\b',
+        begin: '\\b(z-index|word-wrap|word-spacing|word-break|width|widows|white-space|visibility|vertical-align|unicode-bidi|transition-timing-function|transition-property|transition-duration|transition-delay|transition|transform-style|transform-origin|transform|top|text-underline-position|text-transform|text-shadow|text-rendering|text-overflow|text-indent|text-decoration-style|text-decoration-line|text-decoration-color|text-decoration|text-align-last|text-align|tab-size|table-layout|right|resize|quotes|position|pointer-events|perspective-origin|perspective|page-break-inside|page-break-before|page-break-after|padding-top|padding-right|padding-left|padding-bottom|padding|overflow-y|overflow-x|overflow-wrap|overflow|outline-width|outline-style|outline-offset|outline-color|outline|orphans|order|opacity|object-position|object-fit|normal|none|nav-up|nav-right|nav-left|nav-index|nav-down|min-width|min-height|max-width|max-height|mask|marks|margin-top|margin-right|margin-left|margin-bottom|margin|list-style-type|list-style-position|list-style-image|list-style|line-height|letter-spacing|left|justify-content|initial|inherit|ime-mode|image-orientation|image-resolution|image-rendering|icon|hyphens|height|font-weight|font-variant-ligatures|font-variant|font-style|font-stretch|font-size-adjust|font-size|font-language-override|font-kerning|font-feature-settings|font-family|font|float|flex-wrap|flex-shrink|flex-grow|flex-flow|flex-direction|flex-basis|flex|filter|empty-cells|display|direction|cursor|counter-reset|counter-increment|content|column-width|column-span|column-rule-width|column-rule-style|column-rule-color|column-rule|column-gap|column-fill|column-count|columns|color|clip-path|clip|clear|caption-side|break-inside|break-before|break-after|box-sizing|box-shadow|box-decoration-break|bottom|border-width|border-top-width|border-top-style|border-top-right-radius|border-top-left-radius|border-top-color|border-top|border-style|border-spacing|border-right-width|border-right-style|border-right-color|border-right|border-radius|border-left-width|border-left-style|border-left-color|border-left|border-image-width|border-image-source|border-image-slice|border-image-repeat|border-image-outset|border-image|border-color|border-collapse|border-bottom-width|border-bottom-style|border-bottom-right-radius|border-bottom-left-radius|border-bottom-color|border-bottom|border|background-size|background-repeat|background-position|background-origin|background-image|background-color|background-clip|background-attachment|background-blend-mode|background|backface-visibility|auto|animation-timing-function|animation-play-state|animation-name|animation-iteration-count|animation-fill-mode|animation-duration|animation-direction|animation-delay|animation|align-self|align-items|align-content)\\b',
         illegal: '[^\\s]'
       },
       {
@@ -6919,7 +11371,90 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],82:[function(require,module,exports){
+},{}],113:[function(require,module,exports){
+module.exports = function(hljs) {
+  var smali_instr_low_prio = ['add', 'and', 'cmp', 'cmpg', 'cmpl', 'const', 'div', 'double', 'float', 'goto', 'if', 'int', 'long', 'move', 'mul', 'neg', 'new', 'nop', 'not', 'or', 'rem', 'return', 'shl', 'shr', 'sput', 'sub', 'throw', 'ushr', 'xor'];
+  var smali_instr_high_prio = ['aget', 'aput', 'array', 'check', 'execute', 'fill', 'filled', 'goto/16', 'goto/32', 'iget', 'instance', 'invoke', 'iput', 'monitor', 'packed', 'sget', 'sparse'];
+  var smali_keywords = ['transient', 'constructor', 'abstract', 'final', 'synthetic', 'public', 'private', 'protected', 'static', 'bridge', 'system'];
+  return {
+    aliases: ['smali'],
+    contains: [
+      {
+        className: 'string',
+        begin: '"', end: '"',
+        relevance: 0
+      },
+      hljs.COMMENT(
+        '#',
+        '$',
+        {
+          relevance: 0
+        }
+      ),
+      {
+        className: 'keyword',
+        begin: '\\s*\\.end\\s[a-zA-Z0-9]*',
+        relevance: 1
+      },
+      {
+        className: 'keyword',
+        begin: '^[ ]*\\.[a-zA-Z]*',
+        relevance: 0
+      },
+      {
+        className: 'keyword',
+        begin: '\\s:[a-zA-Z_0-9]*',
+        relevance: 0
+      },
+      {
+        className: 'keyword',
+        begin: '\\s('+smali_keywords.join('|')+')',
+        relevance: 1
+      },
+      {
+        className: 'keyword',
+        begin: '\\[',
+        relevance: 0
+      },
+      {
+        className: 'instruction',
+        begin: '\\s('+smali_instr_low_prio.join('|')+')\\s',
+        relevance: 1
+      },
+      {
+        className: 'instruction',
+        begin: '\\s('+smali_instr_low_prio.join('|')+')((\\-|/)[a-zA-Z0-9]+)+\\s',
+        relevance: 10
+      },
+      {
+        className: 'instruction',
+        begin: '\\s('+smali_instr_high_prio.join('|')+')((\\-|/)[a-zA-Z0-9]+)*\\s',
+        relevance: 10
+      },
+      {
+        className: 'class',
+        begin: 'L[^\(;:\n]*;',
+        relevance: 0
+      },
+      {
+        className: 'function',
+        begin: '( |->)[^(\n ;"]*\\(',
+        relevance: 0
+      },
+      {
+        className: 'function',
+        begin: '\\)',
+        relevance: 0
+      },
+      {
+        className: 'variable',
+        begin: '[vp][0-9]+',
+        relevance: 0
+      }
+    ]
+  };
+};
+},{}],114:[function(require,module,exports){
 module.exports = function(hljs) {
   var VAR_IDENT_RE = '[a-z][a-zA-Z0-9_]*';
   var CHAR = {
@@ -6934,10 +11469,7 @@ module.exports = function(hljs) {
     aliases: ['st'],
     keywords: 'self super nil true false thisContext', // only 6
     contains: [
-      {
-        className: 'comment',
-        begin: '"', end: '"'
-      },
+      hljs.COMMENT('"', '"'),
       hljs.APOS_STRING_MODE,
       {
         className: 'class',
@@ -6975,82 +11507,300 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],83:[function(require,module,exports){
+},{}],115:[function(require,module,exports){
 module.exports = function(hljs) {
-  var COMMENT_MODE = {
-    className: 'comment',
-    begin: '--', end: '$'
+  return {
+    aliases: ['ml'],
+    keywords: {
+      keyword:
+        /* according to Definition of Standard ML 97  */
+        'abstype and andalso as case datatype do else end eqtype ' +
+        'exception fn fun functor handle if in include infix infixr ' +
+        'let local nonfix of op open orelse raise rec sharing sig ' +
+        'signature struct structure then type val with withtype where while',
+      built_in:
+        /* built-in types according to basis library */
+        'array bool char exn int list option order real ref string substring vector unit word',
+      literal:
+        'true false NONE SOME LESS EQUAL GREATER nil'
+    },
+    illegal: /\/\/|>>/,
+    lexemes: '[a-z_]\\w*!?',
+    contains: [
+      {
+        className: 'literal',
+        begin: '\\[(\\|\\|)?\\]|\\(\\)'
+      },
+      hljs.COMMENT(
+        '\\(\\*',
+        '\\*\\)',
+        {
+          contains: ['self']
+        }
+      ),
+      { /* type variable */
+        className: 'symbol',
+        begin: '\'[A-Za-z_](?!\')[\\w\']*'
+        /* the grammar is ambiguous on how 'a'b should be interpreted but not the compiler */
+      },
+      { /* polymorphic variant */
+        className: 'tag',
+        begin: '`[A-Z][\\w\']*'
+      },
+      { /* module or constructor */
+        className: 'type',
+        begin: '\\b[A-Z][\\w\']*',
+        relevance: 0
+      },
+      { /* don't color identifiers, but safely catch all identifiers with '*/
+        begin: '[a-z_]\\w*\'[\\w\']*'
+      },
+      hljs.inherit(hljs.APOS_STRING_MODE, {className: 'char', relevance: 0}),
+      hljs.inherit(hljs.QUOTE_STRING_MODE, {illegal: null}),
+      {
+        className: 'number',
+        begin:
+          '\\b(0[xX][a-fA-F0-9_]+[Lln]?|' +
+          '0[oO][0-7_]+[Lln]?|' +
+          '0[bB][01_]+[Lln]?|' +
+          '[0-9][0-9_]*([Lln]|(\\.[0-9_]*)?([eE][-+]?[0-9_]+)?)?)',
+        relevance: 0
+      },
+      {
+        begin: /[-=]>/ // relevance booster
+      }
+    ]
   };
+};
+},{}],116:[function(require,module,exports){
+module.exports = function(hljs) {
+  var allCommands = ['!', '-', '+', '!=', '%', '&&', '*', '/', '=', '==', '>', '>=', '<', '<=', 'or', 'plus', '^', ':', '>>', 'abs', 'accTime', 'acos', 'action', 'actionKeys', 'actionKeysImages', 'actionKeysNames', 'actionKeysNamesArray', 'actionName', 'activateAddons', 'activatedAddons', 'activateKey', 'addAction', 'addBackpack', 'addBackpackCargo', 'addBackpackCargoGlobal', 'addBackpackGlobal', 'addCamShake', 'addCuratorAddons', 'addCuratorCameraArea', 'addCuratorEditableObjects', 'addCuratorEditingArea', 'addCuratorPoints', 'addEditorObject', 'addEventHandler', 'addGoggles', 'addGroupIcon', 'addHandgunItem', 'addHeadgear', 'addItem', 'addItemCargo', 'addItemCargoGlobal', 'addItemPool', 'addItemToBackpack', 'addItemToUniform', 'addItemToVest', 'addLiveStats', 'addMagazine', 'addMagazine array', 'addMagazineAmmoCargo', 'addMagazineCargo', 'addMagazineCargoGlobal', 'addMagazineGlobal', 'addMagazinePool', 'addMagazines', 'addMagazineTurret', 'addMenu', 'addMenuItem', 'addMissionEventHandler', 'addMPEventHandler', 'addMusicEventHandler', 'addPrimaryWeaponItem', 'addPublicVariableEventHandler', 'addRating', 'addResources', 'addScore', 'addScoreSide', 'addSecondaryWeaponItem', 'addSwitchableUnit', 'addTeamMember', 'addToRemainsCollector', 'addUniform', 'addVehicle', 'addVest', 'addWaypoint', 'addWeapon', 'addWeaponCargo', 'addWeaponCargoGlobal', 'addWeaponGlobal', 'addWeaponPool', 'addWeaponTurret', 'agent', 'agents', 'AGLToASL', 'aimedAtTarget', 'aimPos', 'airDensityRTD', 'airportSide', 'AISFinishHeal', 'alive', 'allControls', 'allCurators', 'allDead', 'allDeadMen', 'allDisplays', 'allGroups', 'allMapMarkers', 'allMines', 'allMissionObjects', 'allow3DMode', 'allowCrewInImmobile', 'allowCuratorLogicIgnoreAreas', 'allowDamage', 'allowDammage', 'allowFileOperations', 'allowFleeing', 'allowGetIn', 'allPlayers', 'allSites', 'allTurrets', 'allUnits', 'allUnitsUAV', 'allVariables', 'ammo', 'and', 'animate', 'animateDoor', 'animationPhase', 'animationState', 'append', 'armoryPoints', 'arrayIntersect', 'asin', 'ASLToAGL', 'ASLToATL', 'assert', 'assignAsCargo', 'assignAsCargoIndex', 'assignAsCommander', 'assignAsDriver', 'assignAsGunner', 'assignAsTurret', 'assignCurator', 'assignedCargo', 'assignedCommander', 'assignedDriver', 'assignedGunner', 'assignedItems', 'assignedTarget', 'assignedTeam', 'assignedVehicle', 'assignedVehicleRole', 'assignItem', 'assignTeam', 'assignToAirport', 'atan', 'atan2', 'atg', 'ATLToASL', 'attachedObject', 'attachedObjects', 'attachedTo', 'attachObject', 'attachTo', 'attackEnabled', 'backpack', 'backpackCargo', 'backpackContainer', 'backpackItems', 'backpackMagazines', 'backpackSpaceFor', 'behaviour', 'benchmark', 'binocular', 'blufor', 'boundingBox', 'boundingBoxReal', 'boundingCenter', 'breakOut', 'breakTo', 'briefingName', 'buildingExit', 'buildingPos', 'buttonAction', 'buttonSetAction', 'cadetMode', 'call', 'callExtension', 'camCommand', 'camCommit', 'camCommitPrepared', 'camCommitted', 'camConstuctionSetParams', 'camCreate', 'camDestroy', 'cameraEffect', 'cameraEffectEnableHUD', 'cameraInterest', 'cameraOn', 'cameraView', 'campaignConfigFile', 'camPreload', 'camPreloaded', 'camPrepareBank', 'camPrepareDir', 'camPrepareDive', 'camPrepareFocus', 'camPrepareFov', 'camPrepareFovRange', 'camPreparePos', 'camPrepareRelPos', 'camPrepareTarget', 'camSetBank', 'camSetDir', 'camSetDive', 'camSetFocus', 'camSetFov', 'camSetFovRange', 'camSetPos', 'camSetRelPos', 'camSetTarget', 'camTarget', 'camUseNVG', 'canAdd', 'canAddItemToBackpack', 'canAddItemToUniform', 'canAddItemToVest', 'cancelSimpleTaskDestination', 'canFire', 'canMove', 'canSlingLoad', 'canStand', 'canUnloadInCombat', 'captive', 'captiveNum', 'case', 'catch', 'cbChecked', 'cbSetChecked', 'ceil', 'cheatsEnabled', 'checkAIFeature', 'civilian', 'className', 'clearAllItemsFromBackpack', 'clearBackpackCargo', 'clearBackpackCargoGlobal', 'clearGroupIcons', 'clearItemCargo', 'clearItemCargoGlobal', 'clearItemPool', 'clearMagazineCargo', 'clearMagazineCargoGlobal', 'clearMagazinePool', 'clearOverlay', 'clearRadio', 'clearWeaponCargo', 'clearWeaponCargoGlobal', 'clearWeaponPool', 'closeDialog', 'closeDisplay', 'closeOverlay', 'collapseObjectTree', 'combatMode', 'commandArtilleryFire', 'commandChat', 'commander', 'commandFire', 'commandFollow', 'commandFSM', 'commandGetOut', 'commandingMenu', 'commandMove', 'commandRadio', 'commandStop', 'commandTarget', 'commandWatch', 'comment', 'commitOverlay', 'compile', 'compileFinal', 'completedFSM', 'composeText', 'configClasses', 'configFile', 'configHierarchy', 'configName', 'configProperties', 'configSourceMod', 'configSourceModList', 'connectTerminalToUAV', 'controlNull', 'controlsGroupCtrl', 'copyFromClipboard', 'copyToClipboard', 'copyWaypoints', 'cos', 'count', 'countEnemy', 'countFriendly', 'countSide', 'countType', 'countUnknown', 'createAgent', 'createCenter', 'createDialog', 'createDiaryLink', 'createDiaryRecord', 'createDiarySubject', 'createDisplay', 'createGearDialog', 'createGroup', 'createGuardedPoint', 'createLocation', 'createMarker', 'createMarkerLocal', 'createMenu', 'createMine', 'createMissionDisplay', 'createSimpleTask', 'createSite', 'createSoundSource', 'createTask', 'createTeam', 'createTrigger', 'createUnit', 'createUnit array', 'createVehicle', 'createVehicle array', 'createVehicleCrew', 'createVehicleLocal', 'crew', 'ctrlActivate', 'ctrlAddEventHandler', 'ctrlAutoScrollDelay', 'ctrlAutoScrollRewind', 'ctrlAutoScrollSpeed', 'ctrlChecked', 'ctrlClassName', 'ctrlCommit', 'ctrlCommitted', 'ctrlCreate', 'ctrlDelete', 'ctrlEnable', 'ctrlEnabled', 'ctrlFade', 'ctrlHTMLLoaded', 'ctrlIDC', 'ctrlIDD', 'ctrlMapAnimAdd', 'ctrlMapAnimClear', 'ctrlMapAnimCommit', 'ctrlMapAnimDone', 'ctrlMapCursor', 'ctrlMapMouseOver', 'ctrlMapScale', 'ctrlMapScreenToWorld', 'ctrlMapWorldToScreen', 'ctrlModel', 'ctrlModelDirAndUp', 'ctrlModelScale', 'ctrlParent', 'ctrlPosition', 'ctrlRemoveAllEventHandlers', 'ctrlRemoveEventHandler', 'ctrlScale', 'ctrlSetActiveColor', 'ctrlSetAutoScrollDelay', 'ctrlSetAutoScrollRewind', 'ctrlSetAutoScrollSpeed', 'ctrlSetBackgroundColor', 'ctrlSetChecked', 'ctrlSetEventHandler', 'ctrlSetFade', 'ctrlSetFocus', 'ctrlSetFont', 'ctrlSetFontH1', 'ctrlSetFontH1B', 'ctrlSetFontH2', 'ctrlSetFontH2B', 'ctrlSetFontH3', 'ctrlSetFontH3B', 'ctrlSetFontH4', 'ctrlSetFontH4B', 'ctrlSetFontH5', 'ctrlSetFontH5B', 'ctrlSetFontH6', 'ctrlSetFontH6B', 'ctrlSetFontHeight', 'ctrlSetFontHeightH1', 'ctrlSetFontHeightH2', 'ctrlSetFontHeightH3', 'ctrlSetFontHeightH4', 'ctrlSetFontHeightH5', 'ctrlSetFontHeightH6', 'ctrlSetFontP', 'ctrlSetFontPB', 'ctrlSetForegroundColor', 'ctrlSetModel', 'ctrlSetModelDirAndUp', 'ctrlSetModelScale', 'ctrlSetPosition', 'ctrlSetScale', 'ctrlSetStructuredText', 'ctrlSetText', 'ctrlSetTextColor', 'ctrlSetTooltip', 'ctrlSetTooltipColorBox', 'ctrlSetTooltipColorShade', 'ctrlSetTooltipColorText', 'ctrlShow', 'ctrlShown', 'ctrlText', 'ctrlTextHeight', 'ctrlType', 'ctrlVisible', 'curatorAddons', 'curatorCamera', 'curatorCameraArea', 'curatorCameraAreaCeiling', 'curatorCoef', 'curatorEditableObjects', 'curatorEditingArea', 'curatorEditingAreaType', 'curatorMouseOver', 'curatorPoints', 'curatorRegisteredObjects', 'curatorSelected', 'curatorWaypointCost', 'currentChannel', 'currentCommand', 'currentMagazine', 'currentMagazineDetail', 'currentMagazineDetailTurret', 'currentMagazineTurret', 'currentMuzzle', 'currentNamespace', 'currentTask', 'currentTasks', 'currentThrowable', 'currentVisionMode', 'currentWaypoint', 'currentWeapon', 'currentWeaponMode', 'currentWeaponTurret', 'currentZeroing', 'cursorTarget', 'customChat', 'customRadio', 'cutFadeOut', 'cutObj', 'cutRsc', 'cutText', 'damage', 'date', 'dateToNumber', 'daytime', 'deActivateKey', 'debriefingText', 'debugFSM', 'debugLog', 'default', 'deg', 'deleteAt', 'deleteCenter', 'deleteCollection', 'deleteEditorObject', 'deleteGroup', 'deleteIdentity', 'deleteLocation', 'deleteMarker', 'deleteMarkerLocal', 'deleteRange', 'deleteResources', 'deleteSite', 'deleteStatus', 'deleteTeam', 'deleteVehicle', 'deleteVehicleCrew', 'deleteWaypoint', 'detach', 'detectedMines', 'diag activeMissionFSMs', 'diag activeSQFScripts', 'diag activeSQSScripts', 'diag captureFrame', 'diag captureSlowFrame', 'diag fps', 'diag fpsMin', 'diag frameNo', 'diag log', 'diag logSlowFrame', 'diag tickTime', 'dialog', 'diarySubjectExists', 'didJIP', 'didJIPOwner', 'difficulty', 'difficultyEnabled', 'difficultyEnabledRTD', 'direction', 'directSay', 'disableAI', 'disableCollisionWith', 'disableConversation', 'disableDebriefingStats', 'disableSerialization', 'disableTIEquipment', 'disableUAVConnectability', 'disableUserInput', 'displayAddEventHandler', 'displayCtrl', 'displayNull', 'displayRemoveAllEventHandlers', 'displayRemoveEventHandler', 'displaySetEventHandler', 'dissolveTeam', 'distance', 'distance2D', 'distanceSqr', 'distributionRegion', 'do', 'doArtilleryFire', 'doFire', 'doFollow', 'doFSM', 'doGetOut', 'doMove', 'doorPhase', 'doStop', 'doTarget', 'doWatch', 'drawArrow', 'drawEllipse', 'drawIcon', 'drawIcon3D', 'drawLine', 'drawLine3D', 'drawLink', 'drawLocation', 'drawRectangle', 'driver', 'drop', 'east', 'echo', 'editObject', 'editorSetEventHandler', 'effectiveCommander', 'else', 'emptyPositions', 'enableAI', 'enableAIFeature', 'enableAttack', 'enableCamShake', 'enableCaustics', 'enableCollisionWith', 'enableCopilot', 'enableDebriefingStats', 'enableDiagLegend', 'enableEndDialog', 'enableEngineArtillery', 'enableEnvironment', 'enableFatigue', 'enableGunLights', 'enableIRLasers', 'enableMimics', 'enablePersonTurret', 'enableRadio', 'enableReload', 'enableRopeAttach', 'enableSatNormalOnDetail', 'enableSaving', 'enableSentences', 'enableSimulation', 'enableSimulationGlobal', 'enableTeamSwitch', 'enableUAVConnectability', 'enableUAVWaypoints', 'endLoadingScreen', 'endMission', 'engineOn', 'enginesIsOnRTD', 'enginesRpmRTD', 'enginesTorqueRTD', 'entities', 'estimatedEndServerTime', 'estimatedTimeLeft', 'evalObjectArgument', 'everyBackpack', 'everyContainer', 'exec', 'execEditorScript', 'execFSM', 'execVM', 'exit', 'exitWith', 'exp', 'expectedDestination', 'eyeDirection', 'eyePos', 'face', 'faction', 'fadeMusic', 'fadeRadio', 'fadeSound', 'fadeSpeech', 'failMission', 'false', 'fillWeaponsFromPool', 'find', 'findCover', 'findDisplay', 'findEditorObject', 'findEmptyPosition', 'findEmptyPositionReady', 'findNearestEnemy', 'finishMissionInit', 'finite', 'fire', 'fireAtTarget', 'firstBackpack', 'flag', 'flagOwner', 'fleeing', 'floor', 'flyInHeight', 'fog', 'fogForecast', 'fogParams', 'for', 'forceAddUniform', 'forceEnd', 'forceMap', 'forceRespawn', 'forceSpeed', 'forceWalk', 'forceWeaponFire', 'forceWeatherChange', 'forEach', 'forEachMember', 'forEachMemberAgent', 'forEachMemberTeam', 'format', 'formation', 'formationDirection', 'formationLeader', 'formationMembers', 'formationPosition', 'formationTask', 'formatText', 'formLeader', 'freeLook', 'from', 'fromEditor', 'fuel', 'fullCrew', 'gearSlotAmmoCount', 'gearSlotData', 'getAllHitPointsDamage', 'getAmmoCargo', 'getArray', 'getArtilleryAmmo', 'getArtilleryComputerSettings', 'getArtilleryETA', 'getAssignedCuratorLogic', 'getAssignedCuratorUnit', 'getBackpackCargo', 'getBleedingRemaining', 'getBurningValue', 'getCargoIndex', 'getCenterOfMass', 'getClientState', 'getConnectedUAV', 'getDammage', 'getDescription', 'getDir', 'getDirVisual', 'getDLCs', 'getEditorCamera', 'getEditorMode', 'getEditorObjectScope', 'getElevationOffset', 'getFatigue', 'getFriend', 'getFSMVariable', 'getFuelCargo', 'getGroupIcon', 'getGroupIconParams', 'getGroupIcons', 'getHideFrom', 'getHit', 'getHitIndex', 'getHitPointDamage', 'getItemCargo', 'getMagazineCargo', 'getMarkerColor', 'getMarkerPos', 'getMarkerSize', 'getMarkerType', 'getMass', 'getModelInfo', 'getNumber', 'getObjectArgument', 'getObjectChildren', 'getObjectDLC', 'getObjectMaterials', 'getObjectProxy', 'getObjectTextures', 'getObjectType', 'getObjectViewDistance', 'getOxygenRemaining', 'getPersonUsedDLCs', 'getPlayerChannel', 'getPlayerUID', 'getPos', 'getPosASL', 'getPosASLVisual', 'getPosASLW', 'getPosATL', 'getPosATLVisual', 'getPosVisual', 'getPosWorld', 'getRepairCargo', 'getResolution', 'getShadowDistance', 'getSlingLoad', 'getSpeed', 'getSuppression', 'getTerrainHeightASL', 'getText', 'getVariable', 'getWeaponCargo', 'getWPPos', 'glanceAt', 'globalChat', 'globalRadio', 'goggles', 'goto', 'group', 'groupChat', 'groupFromNetId', 'groupIconSelectable', 'groupIconsVisible', 'groupId', 'groupOwner', 'groupRadio', 'groupSelectedUnits', 'groupSelectUnit', 'grpNull', 'gunner', 'gusts', 'halt', 'handgunItems', 'handgunMagazine', 'handgunWeapon', 'handsHit', 'hasInterface', 'hasWeapon', 'hcAllGroups', 'hcGroupParams', 'hcLeader', 'hcRemoveAllGroups', 'hcRemoveGroup', 'hcSelected', 'hcSelectGroup', 'hcSetGroup', 'hcShowBar', 'hcShownBar', 'headgear', 'hideBody', 'hideObject', 'hideObjectGlobal', 'hint', 'hintC', 'hintCadet', 'hintSilent', 'hmd', 'hostMission', 'htmlLoad', 'HUDMovementLevels', 'humidity', 'if', 'image', 'importAllGroups', 'importance', 'in', 'incapacitatedState', 'independent', 'inflame', 'inflamed', 'inGameUISetEventHandler', 'inheritsFrom', 'initAmbientLife', 'inputAction', 'inRangeOfArtillery', 'insertEditorObject', 'intersect', 'isAbleToBreathe', 'isAgent', 'isArray', 'isAutoHoverOn', 'isAutonomous', 'isAutotest', 'isBleeding', 'isBurning', 'isClass', 'isCollisionLightOn', 'isCopilotEnabled', 'isDedicated', 'isDLCAvailable', 'isEngineOn', 'isEqualTo', 'isFlashlightOn', 'isFlatEmpty', 'isForcedWalk', 'isFormationLeader', 'isHidden', 'isInRemainsCollector', 'isInstructorFigureEnabled', 'isIRLaserOn', 'isKeyActive', 'isKindOf', 'isLightOn', 'isLocalized', 'isManualFire', 'isMarkedForCollection', 'isMultiplayer', 'isNil', 'isNull', 'isNumber', 'isObjectHidden', 'isObjectRTD', 'isOnRoad', 'isPipEnabled', 'isPlayer', 'isRealTime', 'isServer', 'isShowing3DIcons', 'isSteamMission', 'isStreamFriendlyUIEnabled', 'isText', 'isTouchingGround', 'isTurnedOut', 'isTutHintsEnabled', 'isUAVConnectable', 'isUAVConnected', 'isUniformAllowed', 'isWalking', 'isWeaponDeployed', 'isWeaponRested', 'itemCargo', 'items', 'itemsWithMagazines', 'join', 'joinAs', 'joinAsSilent', 'joinSilent', 'joinString', 'kbAddDatabase', 'kbAddDatabaseTargets', 'kbAddTopic', 'kbHasTopic', 'kbReact', 'kbRemoveTopic', 'kbTell', 'kbWasSaid', 'keyImage', 'keyName', 'knowsAbout', 'land', 'landAt', 'landResult', 'language', 'laserTarget', 'lbAdd', 'lbClear', 'lbColor', 'lbCurSel', 'lbData', 'lbDelete', 'lbIsSelected', 'lbPicture', 'lbSelection', 'lbSetColor', 'lbSetCurSel', 'lbSetData', 'lbSetPicture', 'lbSetPictureColor', 'lbSetPictureColorDisabled', 'lbSetPictureColorSelected', 'lbSetSelectColor', 'lbSetSelectColorRight', 'lbSetSelected', 'lbSetTooltip', 'lbSetValue', 'lbSize', 'lbSort', 'lbSortByValue', 'lbText', 'lbValue', 'leader', 'leaderboardDeInit', 'leaderboardGetRows', 'leaderboardInit', 'leaveVehicle', 'libraryCredits', 'libraryDisclaimers', 'lifeState', 'lightAttachObject', 'lightDetachObject', 'lightIsOn', 'lightnings', 'limitSpeed', 'linearConversion', 'lineBreak', 'lineIntersects', 'lineIntersectsObjs', 'lineIntersectsSurfaces', 'lineIntersectsWith', 'linkItem', 'list', 'listObjects', 'ln', 'lnbAddArray', 'lnbAddColumn', 'lnbAddRow', 'lnbClear', 'lnbColor', 'lnbCurSelRow', 'lnbData', 'lnbDeleteColumn', 'lnbDeleteRow', 'lnbGetColumnsPosition', 'lnbPicture', 'lnbSetColor', 'lnbSetColumnsPos', 'lnbSetCurSelRow', 'lnbSetData', 'lnbSetPicture', 'lnbSetText', 'lnbSetValue', 'lnbSize', 'lnbText', 'lnbValue', 'load', 'loadAbs', 'loadBackpack', 'loadFile', 'loadGame', 'loadIdentity', 'loadMagazine', 'loadOverlay', 'loadStatus', 'loadUniform', 'loadVest', 'local', 'localize', 'locationNull', 'locationPosition', 'lock', 'lockCameraTo', 'lockCargo', 'lockDriver', 'locked', 'lockedCargo', 'lockedDriver', 'lockedTurret', 'lockTurret', 'lockWP', 'log', 'logEntities', 'lookAt', 'lookAtPos', 'magazineCargo', 'magazines', 'magazinesAllTurrets', 'magazinesAmmo', 'magazinesAmmoCargo', 'magazinesAmmoFull', 'magazinesDetail', 'magazinesDetailBackpack', 'magazinesDetailUniform', 'magazinesDetailVest', 'magazinesTurret', 'magazineTurretAmmo', 'mapAnimAdd', 'mapAnimClear', 'mapAnimCommit', 'mapAnimDone', 'mapCenterOnCamera', 'mapGridPosition', 'markAsFinishedOnSteam', 'markerAlpha', 'markerBrush', 'markerColor', 'markerDir', 'markerPos', 'markerShape', 'markerSize', 'markerText', 'markerType', 'max', 'members', 'min', 'mineActive', 'mineDetectedBy', 'missionConfigFile', 'missionName', 'missionNamespace', 'missionStart', 'mod', 'modelToWorld', 'modelToWorldVisual', 'moonIntensity', 'morale', 'move', 'moveInAny', 'moveInCargo', 'moveInCommander', 'moveInDriver', 'moveInGunner', 'moveInTurret', 'moveObjectToEnd', 'moveOut', 'moveTime', 'moveTo', 'moveToCompleted', 'moveToFailed', 'musicVolume', 'name', 'name location', 'nameSound', 'nearEntities', 'nearestBuilding', 'nearestLocation', 'nearestLocations', 'nearestLocationWithDubbing', 'nearestObject', 'nearestObjects', 'nearObjects', 'nearObjectsReady', 'nearRoads', 'nearSupplies', 'nearTargets', 'needReload', 'netId', 'netObjNull', 'newOverlay', 'nextMenuItemIndex', 'nextWeatherChange', 'nil', 'nMenuItems', 'not', 'numberToDate', 'objectCurators', 'objectFromNetId', 'objectParent', 'objNull', 'objStatus', 'onBriefingGroup', 'onBriefingNotes', 'onBriefingPlan', 'onBriefingTeamSwitch', 'onCommandModeChanged', 'onDoubleClick', 'onEachFrame', 'onGroupIconClick', 'onGroupIconOverEnter', 'onGroupIconOverLeave', 'onHCGroupSelectionChanged', 'onMapSingleClick', 'onPlayerConnected', 'onPlayerDisconnected', 'onPreloadFinished', 'onPreloadStarted', 'onShowNewObject', 'onTeamSwitch', 'openCuratorInterface', 'openMap', 'openYoutubeVideo', 'opfor', 'or', 'orderGetIn', 'overcast', 'overcastForecast', 'owner', 'param', 'params', 'parseNumber', 'parseText', 'parsingNamespace', 'particlesQuality', 'pi', 'pickWeaponPool', 'pitch', 'playableSlotsNumber', 'playableUnits', 'playAction', 'playActionNow', 'player', 'playerRespawnTime', 'playerSide', 'playersNumber', 'playGesture', 'playMission', 'playMove', 'playMoveNow', 'playMusic', 'playScriptedMission', 'playSound', 'playSound3D', 'position', 'positionCameraToWorld', 'posScreenToWorld', 'posWorldToScreen', 'ppEffectAdjust', 'ppEffectCommit', 'ppEffectCommitted', 'ppEffectCreate', 'ppEffectDestroy', 'ppEffectEnable', 'ppEffectForceInNVG', 'precision', 'preloadCamera', 'preloadObject', 'preloadSound', 'preloadTitleObj', 'preloadTitleRsc', 'preprocessFile', 'preprocessFileLineNumbers', 'primaryWeapon', 'primaryWeaponItems', 'primaryWeaponMagazine', 'priority', 'private', 'processDiaryLink', 'productVersion', 'profileName', 'profileNamespace', 'profileNameSteam', 'progressLoadingScreen', 'progressPosition', 'progressSetPosition', 'publicVariable', 'publicVariableClient', 'publicVariableServer', 'pushBack', 'putWeaponPool', 'queryItemsPool', 'queryMagazinePool', 'queryWeaponPool', 'rad', 'radioChannelAdd', 'radioChannelCreate', 'radioChannelRemove', 'radioChannelSetCallSign', 'radioChannelSetLabel', 'radioVolume', 'rain', 'rainbow', 'random', 'rank', 'rankId', 'rating', 'rectangular', 'registeredTasks', 'registerTask', 'reload', 'reloadEnabled', 'remoteControl', 'remoteExec', 'remoteExecCall', 'removeAction', 'removeAllActions', 'removeAllAssignedItems', 'removeAllContainers', 'removeAllCuratorAddons', 'removeAllCuratorCameraAreas', 'removeAllCuratorEditingAreas', 'removeAllEventHandlers', 'removeAllHandgunItems', 'removeAllItems', 'removeAllItemsWithMagazines', 'removeAllMissionEventHandlers', 'removeAllMPEventHandlers', 'removeAllMusicEventHandlers', 'removeAllPrimaryWeaponItems', 'removeAllWeapons', 'removeBackpack', 'removeBackpackGlobal', 'removeCuratorAddons', 'removeCuratorCameraArea', 'removeCuratorEditableObjects', 'removeCuratorEditingArea', 'removeDrawIcon', 'removeDrawLinks', 'removeEventHandler', 'removeFromRemainsCollector', 'removeGoggles', 'removeGroupIcon', 'removeHandgunItem', 'removeHeadgear', 'removeItem', 'removeItemFromBackpack', 'removeItemFromUniform', 'removeItemFromVest', 'removeItems', 'removeMagazine', 'removeMagazineGlobal', 'removeMagazines', 'removeMagazinesTurret', 'removeMagazineTurret', 'removeMenuItem', 'removeMissionEventHandler', 'removeMPEventHandler', 'removeMusicEventHandler', 'removePrimaryWeaponItem', 'removeSecondaryWeaponItem', 'removeSimpleTask', 'removeSwitchableUnit', 'removeTeamMember', 'removeUniform', 'removeVest', 'removeWeapon', 'removeWeaponGlobal', 'removeWeaponTurret', 'requiredVersion', 'resetCamShake', 'resetSubgroupDirection', 'resistance', 'resize', 'resources', 'respawnVehicle', 'restartEditorCamera', 'reveal', 'revealMine', 'reverse', 'reversedMouseY', 'roadsConnectedTo', 'roleDescription', 'ropeAttachedObjects', 'ropeAttachedTo', 'ropeAttachEnabled', 'ropeAttachTo', 'ropeCreate', 'ropeCut', 'ropeEndPosition', 'ropeLength', 'ropes', 'ropeUnwind', 'ropeUnwound', 'rotorsForcesRTD', 'rotorsRpmRTD', 'round', 'runInitScript', 'safeZoneH', 'safeZoneW', 'safeZoneWAbs', 'safeZoneX', 'safeZoneXAbs', 'safeZoneY', 'saveGame', 'saveIdentity', 'saveJoysticks', 'saveOverlay', 'saveProfileNamespace', 'saveStatus', 'saveVar', 'savingEnabled', 'say', 'say2D', 'say3D', 'scopeName', 'score', 'scoreSide', 'screenToWorld', 'scriptDone', 'scriptName', 'scriptNull', 'scudState', 'secondaryWeapon', 'secondaryWeaponItems', 'secondaryWeaponMagazine', 'select', 'selectBestPlaces', 'selectDiarySubject', 'selectedEditorObjects', 'selectEditorObject', 'selectionPosition', 'selectLeader', 'selectNoPlayer', 'selectPlayer', 'selectWeapon', 'selectWeaponTurret', 'sendAUMessage', 'sendSimpleCommand', 'sendTask', 'sendTaskResult', 'sendUDPMessage', 'serverCommand', 'serverCommandAvailable', 'serverCommandExecutable', 'serverName', 'serverTime', 'set', 'setAccTime', 'setAirportSide', 'setAmmo', 'setAmmoCargo', 'setAperture', 'setApertureNew', 'setArmoryPoints', 'setAttributes', 'setAutonomous', 'setBehaviour', 'setBleedingRemaining', 'setCameraInterest', 'setCamShakeDefParams', 'setCamShakeParams', 'setCamUseTi', 'setCaptive', 'setCenterOfMass', 'setCollisionLight', 'setCombatMode', 'setCompassOscillation', 'setCuratorCameraAreaCeiling', 'setCuratorCoef', 'setCuratorEditingAreaType', 'setCuratorWaypointCost', 'setCurrentChannel', 'setCurrentTask', 'setCurrentWaypoint', 'setDamage', 'setDammage', 'setDate', 'setDebriefingText', 'setDefaultCamera', 'setDestination', 'setDetailMapBlendPars', 'setDir', 'setDirection', 'setDrawIcon', 'setDropInterval', 'setEditorMode', 'setEditorObjectScope', 'setEffectCondition', 'setFace', 'setFaceAnimation', 'setFatigue', 'setFlagOwner', 'setFlagSide', 'setFlagTexture', 'setFog', 'setFog array', 'setFormation', 'setFormationTask', 'setFormDir', 'setFriend', 'setFromEditor', 'setFSMVariable', 'setFuel', 'setFuelCargo', 'setGroupIcon', 'setGroupIconParams', 'setGroupIconsSelectable', 'setGroupIconsVisible', 'setGroupId', 'setGroupIdGlobal', 'setGroupOwner', 'setGusts', 'setHideBehind', 'setHit', 'setHitIndex', 'setHitPointDamage', 'setHorizonParallaxCoef', 'setHUDMovementLevels', 'setIdentity', 'setImportance', 'setLeader', 'setLightAmbient', 'setLightAttenuation', 'setLightBrightness', 'setLightColor', 'setLightDayLight', 'setLightFlareMaxDistance', 'setLightFlareSize', 'setLightIntensity', 'setLightnings', 'setLightUseFlare', 'setLocalWindParams', 'setMagazineTurretAmmo', 'setMarkerAlpha', 'setMarkerAlphaLocal', 'setMarkerBrush', 'setMarkerBrushLocal', 'setMarkerColor', 'setMarkerColorLocal', 'setMarkerDir', 'setMarkerDirLocal', 'setMarkerPos', 'setMarkerPosLocal', 'setMarkerShape', 'setMarkerShapeLocal', 'setMarkerSize', 'setMarkerSizeLocal', 'setMarkerText', 'setMarkerTextLocal', 'setMarkerType', 'setMarkerTypeLocal', 'setMass', 'setMimic', 'setMousePosition', 'setMusicEffect', 'setMusicEventHandler', 'setName', 'setNameSound', 'setObjectArguments', 'setObjectMaterial', 'setObjectProxy', 'setObjectTexture', 'setObjectTextureGlobal', 'setObjectViewDistance', 'setOvercast', 'setOwner', 'setOxygenRemaining', 'setParticleCircle', 'setParticleClass', 'setParticleFire', 'setParticleParams', 'setParticleRandom', 'setPilotLight', 'setPiPEffect', 'setPitch', 'setPlayable', 'setPlayerRespawnTime', 'setPos', 'setPosASL', 'setPosASL2', 'setPosASLW', 'setPosATL', 'setPosition', 'setPosWorld', 'setRadioMsg', 'setRain', 'setRainbow', 'setRandomLip', 'setRank', 'setRectangular', 'setRepairCargo', 'setShadowDistance', 'setSide', 'setSimpleTaskDescription', 'setSimpleTaskDestination', 'setSimpleTaskTarget', 'setSimulWeatherLayers', 'setSize', 'setSkill', 'setSkill array', 'setSlingLoad', 'setSoundEffect', 'setSpeaker', 'setSpeech', 'setSpeedMode', 'setStatValue', 'setSuppression', 'setSystemOfUnits', 'setTargetAge', 'setTaskResult', 'setTaskState', 'setTerrainGrid', 'setText', 'setTimeMultiplier', 'setTitleEffect', 'setTriggerActivation', 'setTriggerArea', 'setTriggerStatements', 'setTriggerText', 'setTriggerTimeout', 'setTriggerType', 'setType', 'setUnconscious', 'setUnitAbility', 'setUnitPos', 'setUnitPosWeak', 'setUnitRank', 'setUnitRecoilCoefficient', 'setUnloadInCombat', 'setUserActionText', 'setVariable', 'setVectorDir', 'setVectorDirAndUp', 'setVectorUp', 'setVehicleAmmo', 'setVehicleAmmoDef', 'setVehicleArmor', 'setVehicleId', 'setVehicleLock', 'setVehiclePosition', 'setVehicleTiPars', 'setVehicleVarName', 'setVelocity', 'setVelocityTransformation', 'setViewDistance', 'setVisibleIfTreeCollapsed', 'setWaves', 'setWaypointBehaviour', 'setWaypointCombatMode', 'setWaypointCompletionRadius', 'setWaypointDescription', 'setWaypointFormation', 'setWaypointHousePosition', 'setWaypointLoiterRadius', 'setWaypointLoiterType', 'setWaypointName', 'setWaypointPosition', 'setWaypointScript', 'setWaypointSpeed', 'setWaypointStatements', 'setWaypointTimeout', 'setWaypointType', 'setWaypointVisible', 'setWeaponReloadingTime', 'setWind', 'setWindDir', 'setWindForce', 'setWindStr', 'setWPPos', 'show3DIcons', 'showChat', 'showCinemaBorder', 'showCommandingMenu', 'showCompass', 'showCuratorCompass', 'showGPS', 'showHUD', 'showLegend', 'showMap', 'shownArtilleryComputer', 'shownChat', 'shownCompass', 'shownCuratorCompass', 'showNewEditorObject', 'shownGPS', 'shownHUD', 'shownMap', 'shownPad', 'shownRadio', 'shownUAVFeed', 'shownWarrant', 'shownWatch', 'showPad', 'showRadio', 'showSubtitles', 'showUAVFeed', 'showWarrant', 'showWatch', 'showWaypoint', 'side', 'sideChat', 'sideEnemy', 'sideFriendly', 'sideLogic', 'sideRadio', 'sideUnknown', 'simpleTasks', 'simulationEnabled', 'simulCloudDensity', 'simulCloudOcclusion', 'simulInClouds', 'simulWeatherSync', 'sin', 'size', 'sizeOf', 'skill', 'skillFinal', 'skipTime', 'sleep', 'sliderPosition', 'sliderRange', 'sliderSetPosition', 'sliderSetRange', 'sliderSetSpeed', 'sliderSpeed', 'slingLoadAssistantShown', 'soldierMagazines', 'someAmmo', 'sort', 'soundVolume', 'spawn', 'speaker', 'speed', 'speedMode', 'splitString', 'sqrt', 'squadParams', 'stance', 'startLoadingScreen', 'step', 'stop', 'stopped', 'str', 'sunOrMoon', 'supportInfo', 'suppressFor', 'surfaceIsWater', 'surfaceNormal', 'surfaceType', 'swimInDepth', 'switch', 'switchableUnits', 'switchAction', 'switchCamera', 'switchGesture', 'switchLight', 'switchMove', 'synchronizedObjects', 'synchronizedTriggers', 'synchronizedWaypoints', 'synchronizeObjectsAdd', 'synchronizeObjectsRemove', 'synchronizeTrigger', 'synchronizeWaypoint', 'synchronizeWaypoint trigger', 'systemChat', 'systemOfUnits', 'tan', 'targetKnowledge', 'targetsAggregate', 'targetsQuery', 'taskChildren', 'taskCompleted', 'taskDescription', 'taskDestination', 'taskHint', 'taskNull', 'taskParent', 'taskResult', 'taskState', 'teamMember', 'teamMemberNull', 'teamName', 'teams', 'teamSwitch', 'teamSwitchEnabled', 'teamType', 'terminate', 'terrainIntersect', 'terrainIntersectASL', 'text', 'text location', 'textLog', 'textLogFormat', 'tg', 'then', 'throw', 'time', 'timeMultiplier', 'titleCut', 'titleFadeOut', 'titleObj', 'titleRsc', 'titleText', 'to', 'toArray', 'toLower', 'toString', 'toUpper', 'triggerActivated', 'triggerActivation', 'triggerArea', 'triggerAttachedVehicle', 'triggerAttachObject', 'triggerAttachVehicle', 'triggerStatements', 'triggerText', 'triggerTimeout', 'triggerTimeoutCurrent', 'triggerType', 'true', 'try', 'turretLocal', 'turretOwner', 'turretUnit', 'tvAdd', 'tvClear', 'tvCollapse', 'tvCount', 'tvCurSel', 'tvData', 'tvDelete', 'tvExpand', 'tvPicture', 'tvSetCurSel', 'tvSetData', 'tvSetPicture', 'tvSetPictureColor', 'tvSetTooltip', 'tvSetValue', 'tvSort', 'tvSortByValue', 'tvText', 'tvValue', 'type', 'typeName', 'typeOf', 'UAVControl', 'uiNamespace', 'uiSleep', 'unassignCurator', 'unassignItem', 'unassignTeam', 'unassignVehicle', 'underwater', 'uniform', 'uniformContainer', 'uniformItems', 'uniformMagazines', 'unitAddons', 'unitBackpack', 'unitPos', 'unitReady', 'unitRecoilCoefficient', 'units', 'unitsBelowHeight', 'unlinkItem', 'unlockAchievement', 'unregisterTask', 'updateDrawIcon', 'updateMenuItem', 'updateObjectTree', 'useAudioTimeForMoves', 'vectorAdd', 'vectorCos', 'vectorCrossProduct', 'vectorDiff', 'vectorDir', 'vectorDirVisual', 'vectorDistance', 'vectorDistanceSqr', 'vectorDotProduct', 'vectorFromTo', 'vectorMagnitude', 'vectorMagnitudeSqr', 'vectorMultiply', 'vectorNormalized', 'vectorUp', 'vectorUpVisual', 'vehicle', 'vehicleChat', 'vehicleRadio', 'vehicles', 'vehicleVarName', 'velocity', 'velocityModelSpace', 'verifySignature', 'vest', 'vestContainer', 'vestItems', 'vestMagazines', 'viewDistance', 'visibleCompass', 'visibleGPS', 'visibleMap', 'visiblePosition', 'visiblePositionASL', 'visibleWatch', 'waitUntil', 'waves', 'waypointAttachedObject', 'waypointAttachedVehicle', 'waypointAttachObject', 'waypointAttachVehicle', 'waypointBehaviour', 'waypointCombatMode', 'waypointCompletionRadius', 'waypointDescription', 'waypointFormation', 'waypointHousePosition', 'waypointLoiterRadius', 'waypointLoiterType', 'waypointName', 'waypointPosition', 'waypoints', 'waypointScript', 'waypointsEnabledUAV', 'waypointShow', 'waypointSpeed', 'waypointStatements', 'waypointTimeout', 'waypointTimeoutCurrent', 'waypointType', 'waypointVisible', 'weaponAccessories', 'weaponCargo', 'weaponDirection', 'weaponLowered', 'weapons', 'weaponsItems', 'weaponsItemsCargo', 'weaponState', 'weaponsTurret', 'weightRTD', 'west', 'WFSideText', 'while', 'wind', 'windDir', 'windStr', 'wingsForcesRTD', 'with', 'worldName', 'worldSize', 'worldToModel', 'worldToModelVisual', 'worldToScreen'];
+  var control = ['case', 'catch', 'default', 'do', 'else', 'exit', 'exitWith|5', 'for', 'forEach', 'from', 'if', 'switch', 'then', 'throw', 'to', 'try', 'while', 'with'];
+  var operators = ['!', '-', '+', '!=', '%', '&&', '*', '/', '=', '==', '>', '>=', '<', '<=', '^', ':', '>>'];
+  var specials = ['_forEachIndex|10', '_this|10', '_x|10'];
+  var literals = ['true', 'false', 'nil'];
+  var builtins = allCommands.filter(function (command) {
+    return control.indexOf(command) == -1 &&
+        literals.indexOf(command) == -1 &&
+        operators.indexOf(command) == -1;
+  });
+  //Note: operators will not be treated as builtins due to the lexeme rules
+  builtins = builtins.concat(specials);
+
+  // In SQF strings, quotes matching the start are escaped by adding a consecutive.
+  // Example of single escaped quotes: " "" " and  ' '' '.
+  var STRINGS = {
+    className: 'string',
+    relevance: 0,
+    variants: [
+      {
+        begin: '"',
+        end: '"',
+        contains: [{begin: '""'}]
+      },
+      {
+        begin: '\'',
+        end: '\'',
+        contains: [{begin: '\'\''}]
+      }
+    ]
+  };
+
+  var NUMBERS = {
+    className: 'number',
+    begin: hljs.NUMBER_RE,
+    relevance: 0
+  };
+
+  // Preprocessor definitions borrowed from C++
+  var PREPROCESSOR_STRINGS = {
+    className: 'string',
+    variants: [
+      hljs.QUOTE_STRING_MODE,
+      {
+        begin: '\'\\\\?.', end: '\'',
+        illegal: '.'
+      }
+    ]
+  };
+
+  var PREPROCESSOR =       {
+    className: 'preprocessor',
+    begin: '#', end: '$',
+    keywords: 'if else elif endif define undef warning error line ' +
+              'pragma ifdef ifndef',
+    contains: [
+      {
+        begin: /\\\n/, relevance: 0
+      },
+      {
+        beginKeywords: 'include', end: '$',
+        contains: [
+          PREPROCESSOR_STRINGS,
+          {
+            className: 'string',
+            begin: '<', end: '>',
+            illegal: '\\n',
+          }
+        ]
+      },
+      PREPROCESSOR_STRINGS,
+      NUMBERS,
+      hljs.C_LINE_COMMENT_MODE,
+      hljs.C_BLOCK_COMMENT_MODE
+    ]
+  };
+
+  return {
+    aliases: ['sqf'],
+    case_insensitive: true,
+    keywords: {
+      keyword: control.join(' '),
+      built_in: builtins.join(' '),
+      literal: literals.join(' ')
+    },
+    contains: [
+      hljs.C_LINE_COMMENT_MODE,
+      hljs.C_BLOCK_COMMENT_MODE,
+      NUMBERS,
+      STRINGS,
+      PREPROCESSOR
+    ]
+  };
+};
+},{}],117:[function(require,module,exports){
+module.exports = function(hljs) {
+  var COMMENT_MODE = hljs.COMMENT('--', '$');
   return {
     case_insensitive: true,
-    illegal: /[<>]/,
+    illegal: /[<>{}*]/,
     contains: [
       {
         className: 'operator',
         beginKeywords:
-          'begin end start commit rollback savepoint lock alter create drop rename call '+
-          'delete do handler insert load replace select truncate update set show pragma grant '+
-          'merge describe use explain help declare prepare execute deallocate savepoint release '+
-          'unlock purge reset change stop analyze cache flush optimize repair kill '+
-          'install uninstall checksum restore check backup',
+          'begin end start commit rollback savepoint lock alter create drop rename call ' +
+          'delete do handler insert load replace select truncate update set show pragma grant ' +
+          'merge describe use explain help declare prepare execute deallocate release ' +
+          'unlock purge reset change stop analyze cache flush optimize repair kill ' +
+          'install uninstall checksum restore check backup revoke',
         end: /;/, endsWithParent: true,
         keywords: {
           keyword:
-            'abs absolute acos action add adddate addtime aes_decrypt aes_encrypt after aggregate all allocate alter ' +
-            'analyze and any are as asc ascii asin assertion at atan atan2 atn2 authorization authors avg backup ' +
-            'before begin benchmark between bin binlog bit_and bit_count bit_length bit_or bit_xor both by ' +
-            'cache call cascade cascaded case cast catalog ceil ceiling chain change changed char_length ' +
-            'character_length charindex charset check checksum checksum_agg choose close coalesce ' +
-            'coercibility collate collation collationproperty column columns columns_updated commit compress concat ' +
-            'concat_ws concurrent connect connection connection_id consistent constraint constraints continue ' +
-            'contributors conv convert convert_tz corresponding cos cot count count_big crc32 create cross cume_dist ' +
-            'curdate current current_date current_time current_timestamp current_user cursor curtime data database ' +
-            'databases datalength date_add date_format date_sub dateadd datediff datefromparts datename ' +
-            'datepart datetime2fromparts datetimeoffsetfromparts day dayname dayofmonth dayofweek dayofyear ' +
-            'deallocate declare decode default deferrable deferred degrees delayed delete des_decrypt ' +
-            'des_encrypt des_key_file desc describe descriptor diagnostics difference disconnect distinct ' +
-            'distinctrow div do domain double drop dumpfile each else elt enclosed encode encrypt end end-exec ' +
-            'engine engines eomonth errors escape escaped event eventdata events except exception exec execute ' +
-            'exists exp explain export_set extended external extract fast fetch field fields find_in_set ' +
-            'first first_value floor flush for force foreign format found found_rows from from_base64 ' +
-            'from_days from_unixtime full function get get_format get_lock getdate getutcdate global go goto grant ' +
-            'grants greatest group group_concat grouping grouping_id gtid_subset gtid_subtract handler having help ' +
-            'hex high_priority hosts hour ident_current ident_incr ident_seed identified identity if ifnull ignore ' +
-            'iif ilike immediate in index indicator inet6_aton inet6_ntoa inet_aton inet_ntoa infile initially inner ' +
-            'innodb input insert install instr intersect into is is_free_lock is_ipv4 ' +
-            'is_ipv4_compat is_ipv4_mapped is_not is_not_null is_used_lock isdate isnull isolation join key kill ' +
-            'language last last_day last_insert_id last_value lcase lead leading least leaves left len lenght level ' +
-            'like limit lines ln load load_file local localtime localtimestamp locate lock log log10 log2 logfile ' +
-            'logs low_priority lower lpad ltrim make_set makedate maketime master master_pos_wait match matched max ' +
-            'md5 medium merge microsecond mid min minute mod mode module month monthname mutex name_const names ' +
-            'national natural nchar next no no_write_to_binlog not now nullif nvarchar oct ' +
-            'octet_length of old_password on only open optimize option optionally or ord order outer outfile output ' +
-            'pad parse partial partition password patindex percent_rank percentile_cont percentile_disc period_add ' +
-            'period_diff pi plugin position pow power pragma precision prepare preserve primary prior privileges ' +
-            'procedure procedure_analyze processlist profile profiles public publishingservername purge quarter ' +
-            'query quick quote quotename radians rand read references regexp relative relaylog release ' +
-            'release_lock rename repair repeat replace replicate reset restore restrict return returns reverse ' +
-            'revoke right rlike rollback rollup round row row_count rows rpad rtrim savepoint schema scroll ' +
-            'sec_to_time second section select serializable server session session_user set sha sha1 sha2 share ' +
-            'show sign sin size slave sleep smalldatetimefromparts snapshot some soname soundex ' +
-            'sounds_like space sql sql_big_result sql_buffer_result sql_cache sql_calc_found_rows sql_no_cache ' +
-            'sql_small_result sql_variant_property sqlstate sqrt square start starting status std ' +
-            'stddev stddev_pop stddev_samp stdev stdevp stop str str_to_date straight_join strcmp string stuff ' +
-            'subdate substr substring subtime subtring_index sum switchoffset sysdate sysdatetime sysdatetimeoffset ' +
-            'system_user sysutcdatetime table tables tablespace tan temporary terminated tertiary_weights then time ' +
-            'time_format time_to_sec timediff timefromparts timestamp timestampadd timestampdiff timezone_hour ' +
-            'timezone_minute to to_base64 to_days to_seconds todatetimeoffset trailing transaction translation ' +
-            'trigger trigger_nestlevel triggers trim truncate try_cast try_convert try_parse ucase uncompress ' +
-            'uncompressed_length unhex unicode uninstall union unique unix_timestamp unknown unlock update upgrade ' +
-            'upped upper usage use user user_resources using utc_date utc_time utc_timestamp uuid uuid_short ' +
-            'validate_password_strength value values var var_pop var_samp variables variance varp ' +
-            'version view warnings week weekday weekofyear weight_string when whenever where with work write xml ' +
-            'xor year yearweek zon',
+            'abort abs absolute acc acce accep accept access accessed accessible account acos action activate add ' +
+            'addtime admin administer advanced advise aes_decrypt aes_encrypt after agent aggregate ali alia alias ' +
+            'allocate allow alter always analyze ancillary and any anydata anydataset anyschema anytype apply ' +
+            'archive archived archivelog are as asc ascii asin assembly assertion associate asynchronous at atan ' +
+            'atn2 attr attri attrib attribu attribut attribute attributes audit authenticated authentication authid ' +
+            'authors auto autoallocate autodblink autoextend automatic availability avg backup badfile basicfile ' +
+            'before begin beginning benchmark between bfile bfile_base big bigfile bin binary_double binary_float ' +
+            'binlog bit_and bit_count bit_length bit_or bit_xor bitmap blob_base block blocksize body both bound ' +
+            'buffer_cache buffer_pool build bulk by byte byteordermark bytes c cache caching call calling cancel ' +
+            'capacity cascade cascaded case cast catalog category ceil ceiling chain change changed char_base ' +
+            'char_length character_length characters characterset charindex charset charsetform charsetid check ' +
+            'checksum checksum_agg child choose chr chunk class cleanup clear client clob clob_base clone close ' +
+            'cluster_id cluster_probability cluster_set clustering coalesce coercibility col collate collation ' +
+            'collect colu colum column column_value columns columns_updated comment commit compact compatibility ' +
+            'compiled complete composite_limit compound compress compute concat concat_ws concurrent confirm conn ' +
+            'connec connect connect_by_iscycle connect_by_isleaf connect_by_root connect_time connection ' +
+            'consider consistent constant constraint constraints constructor container content contents context ' +
+            'contributors controlfile conv convert convert_tz corr corr_k corr_s corresponding corruption cos cost ' +
+            'count count_big counted covar_pop covar_samp cpu_per_call cpu_per_session crc32 create creation ' +
+            'critical cross cube cume_dist curdate current current_date current_time current_timestamp current_user ' +
+            'cursor curtime customdatum cycle d data database databases datafile datafiles datalength date_add ' +
+            'date_cache date_format date_sub dateadd datediff datefromparts datename datepart datetime2fromparts ' +
+            'day day_to_second dayname dayofmonth dayofweek dayofyear days db_role_change dbtimezone ddl deallocate ' +
+            'declare decode decompose decrement decrypt deduplicate def defa defau defaul default defaults ' +
+            'deferred defi defin define degrees delayed delegate delete delete_all delimited demand dense_rank ' +
+            'depth dequeue des_decrypt des_encrypt des_key_file desc descr descri describ describe descriptor ' +
+            'deterministic diagnostics difference dimension direct_load directory disable disable_all ' +
+            'disallow disassociate discardfile disconnect diskgroup distinct distinctrow distribute distributed div ' +
+            'do document domain dotnet double downgrade drop dumpfile duplicate duration e each edition editionable ' +
+            'editions element ellipsis else elsif elt empty enable enable_all enclosed encode encoding encrypt ' +
+            'end end-exec endian enforced engine engines enqueue enterprise entityescaping eomonth error errors ' +
+            'escaped evalname evaluate event eventdata events except exception exceptions exchange exclude excluding ' +
+            'execu execut execute exempt exists exit exp expire explain export export_set extended extent external ' +
+            'external_1 external_2 externally extract f failed failed_login_attempts failover failure far fast ' +
+            'feature_set feature_value fetch field fields file file_name_convert filesystem_like_logging final ' +
+            'finish first first_value fixed flash_cache flashback floor flush following follows for forall force ' +
+            'form forma format found found_rows freelist freelists freepools fresh from from_base64 from_days ' +
+            'ftp full function g general generated get get_format get_lock getdate getutcdate global global_name ' +
+            'globally go goto grant grants greatest group group_concat group_id grouping grouping_id groups ' +
+            'gtid_subtract guarantee guard handler hash hashkeys having hea head headi headin heading heap help hex ' +
+            'hierarchy high high_priority hosts hour http i id ident_current ident_incr ident_seed identified ' +
+            'identity idle_time if ifnull ignore iif ilike ilm immediate import in include including increment ' +
+            'index indexes indexing indextype indicator indices inet6_aton inet6_ntoa inet_aton inet_ntoa infile ' +
+            'initial initialized initially initrans inmemory inner innodb input insert install instance instantiable ' +
+            'instr interface interleaved intersect into invalidate invisible is is_free_lock is_ipv4 is_ipv4_compat ' +
+            'is_not is_not_null is_used_lock isdate isnull isolation iterate java join json json_exists ' +
+            'k keep keep_duplicates key keys kill l language large last last_day last_insert_id last_value lax lcase ' +
+            'lead leading least leaves left len lenght length less level levels library like like2 like4 likec limit ' +
+            'lines link list listagg little ln load load_file lob lobs local localtime localtimestamp locate ' +
+            'locator lock locked log log10 log2 logfile logfiles logging logical logical_reads_per_call ' +
+            'logoff logon logs long loop low low_priority lower lpad lrtrim ltrim m main make_set makedate maketime ' +
+            'managed management manual map mapping mask master master_pos_wait match matched materialized max ' +
+            'maxextents maximize maxinstances maxlen maxlogfiles maxloghistory maxlogmembers maxsize maxtrans ' +
+            'md5 measures median medium member memcompress memory merge microsecond mid migration min minextents ' +
+            'minimum mining minus minute minvalue missing mod mode model modification modify module monitoring month ' +
+            'months mount move movement multiset mutex n name name_const names nan national native natural nav nchar ' +
+            'nclob nested never new newline next nextval no no_write_to_binlog noarchivelog noaudit nobadfile ' +
+            'nocheck nocompress nocopy nocycle nodelay nodiscardfile noentityescaping noguarantee nokeep nologfile ' +
+            'nomapping nomaxvalue nominimize nominvalue nomonitoring none noneditionable nonschema noorder ' +
+            'nopr nopro noprom nopromp noprompt norely noresetlogs noreverse normal norowdependencies noschemacheck ' +
+            'noswitch not nothing notice notrim novalidate now nowait nth_value nullif nulls num numb numbe ' +
+            'nvarchar nvarchar2 object ocicoll ocidate ocidatetime ociduration ociinterval ociloblocator ocinumber ' +
+            'ociref ocirefcursor ocirowid ocistring ocitype oct octet_length of off offline offset oid oidindex old ' +
+            'on online only opaque open operations operator optimal optimize option optionally or oracle oracle_date ' +
+            'oradata ord ordaudio orddicom orddoc order ordimage ordinality ordvideo organization orlany orlvary ' +
+            'out outer outfile outline output over overflow overriding p package pad parallel parallel_enable ' +
+            'parameters parent parse partial partition partitions pascal passing password password_grace_time ' +
+            'password_lock_time password_reuse_max password_reuse_time password_verify_function patch path patindex ' +
+            'pctincrease pctthreshold pctused pctversion percent percent_rank percentile_cont percentile_disc ' +
+            'performance period period_add period_diff permanent physical pi pipe pipelined pivot pluggable plugin ' +
+            'policy position post_transaction pow power pragma prebuilt precedes preceding precision prediction ' +
+            'prediction_cost prediction_details prediction_probability prediction_set prepare present preserve ' +
+            'prior priority private private_sga privileges procedural procedure procedure_analyze processlist ' +
+            'profiles project prompt protection public publishingservername purge quarter query quick quiesce quota ' +
+            'quotename radians raise rand range rank raw read reads readsize rebuild record records ' +
+            'recover recovery recursive recycle redo reduced ref reference referenced references referencing refresh ' +
+            'regexp_like register regr_avgx regr_avgy regr_count regr_intercept regr_r2 regr_slope regr_sxx regr_sxy ' +
+            'reject rekey relational relative relaylog release release_lock relies_on relocate rely rem remainder rename ' +
+            'repair repeat replace replicate replication required reset resetlogs resize resource respect restore ' +
+            'restricted result result_cache resumable resume retention return returning returns reuse reverse revoke ' +
+            'right rlike role roles rollback rolling rollup round row row_count rowdependencies rowid rownum rows ' +
+            'rtrim rules safe salt sample save savepoint sb1 sb2 sb4 scan schema schemacheck scn scope scroll ' +
+            'sdo_georaster sdo_topo_geometry search sec_to_time second section securefile security seed segment select ' +
+            'self sequence sequential serializable server servererror session session_user sessions_per_user set ' +
+            'sets settings sha sha1 sha2 share shared shared_pool short show shrink shutdown si_averagecolor ' +
+            'si_colorhistogram si_featurelist si_positionalcolor si_stillimage si_texture siblings sid sign sin ' +
+            'size size_t sizes skip slave sleep smalldatetimefromparts smallfile snapshot some soname sort soundex ' +
+            'source space sparse spfile split sql sql_big_result sql_buffer_result sql_cache sql_calc_found_rows ' +
+            'sql_small_result sql_variant_property sqlcode sqldata sqlerror sqlname sqlstate sqrt square standalone ' +
+            'standby start starting startup statement static statistics stats_binomial_test stats_crosstab ' +
+            'stats_ks_test stats_mode stats_mw_test stats_one_way_anova stats_t_test_ stats_t_test_indep ' +
+            'stats_t_test_one stats_t_test_paired stats_wsr_test status std stddev stddev_pop stddev_samp stdev ' +
+            'stop storage store stored str str_to_date straight_join strcmp strict string struct stuff style subdate ' +
+            'subpartition subpartitions substitutable substr substring subtime subtring_index subtype success sum ' +
+            'suspend switch switchoffset switchover sync synchronous synonym sys sys_xmlagg sysasm sysaux sysdate ' +
+            'sysdatetimeoffset sysdba sysoper system system_user sysutcdatetime t table tables tablespace tan tdo ' +
+            'template temporary terminated tertiary_weights test than then thread through tier ties time time_format ' +
+            'time_zone timediff timefromparts timeout timestamp timestampadd timestampdiff timezone_abbr ' +
+            'timezone_minute timezone_region to to_base64 to_date to_days to_seconds todatetimeoffset trace tracking ' +
+            'transaction transactional translate translation treat trigger trigger_nestlevel triggers trim truncate ' +
+            'try_cast try_convert try_parse type ub1 ub2 ub4 ucase unarchived unbounded uncompress ' +
+            'under undo unhex unicode uniform uninstall union unique unix_timestamp unknown unlimited unlock unpivot ' +
+            'unrecoverable unsafe unsigned until untrusted unusable unused update updated upgrade upped upper upsert ' +
+            'url urowid usable usage use use_stored_outlines user user_data user_resources users using utc_date ' +
+            'utc_timestamp uuid uuid_short validate validate_password_strength validation valist value values var ' +
+            'var_samp varcharc vari varia variab variabl variable variables variance varp varraw varrawc varray ' +
+            'verify version versions view virtual visible void wait wallet warning warnings week weekday weekofyear ' +
+            'wellformed when whene whenev wheneve whenever where while whitespace with within without work wrapped ' +
+            'xdb xml xmlagg xmlattributes xmlcast xmlcolattval xmlelement xmlexists xmlforest xmlindex xmlnamespaces ' +
+            'xmlpi xmlquery xmlroot xmlschema xmlserialize xmltable xmltype xor year year_to_month years yearweek',
           literal:
             'true false null',
           built_in:
-            'array bigint binary bit blob boolean char character date dec decimal float int integer interval number ' +
-            'numeric real serial smallint varchar varying int8 serial8 text'
+            'array bigint binary bit blob boolean char character date dec decimal float int int8 integer interval number ' +
+            'numeric real record serial serial8 smallint text varchar varying void'
         },
         contains: [
           {
@@ -7078,30 +11828,566 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],84:[function(require,module,exports){
+},{}],118:[function(require,module,exports){
+module.exports = function(hljs) {
+  return {
+    aliases: ['do', 'ado'],
+    case_insensitive: true,
+    keywords: 'if else in foreach for forv forva forval forvalu forvalue forvalues by bys bysort xi quietly qui capture about ac ac_7 acprplot acprplot_7 adjust ado adopath adoupdate alpha ameans an ano anov anova anova_estat anova_terms anovadef aorder ap app appe appen append arch arch_dr arch_estat arch_p archlm areg areg_p args arima arima_dr arima_estat arima_p as asmprobit asmprobit_estat asmprobit_lf asmprobit_mfx__dlg asmprobit_p ass asse asser assert avplot avplot_7 avplots avplots_7 bcskew0 bgodfrey binreg bip0_lf biplot bipp_lf bipr_lf bipr_p biprobit bitest bitesti bitowt blogit bmemsize boot bootsamp bootstrap bootstrap_8 boxco_l boxco_p boxcox boxcox_6 boxcox_p bprobit br break brier bro brow brows browse brr brrstat bs bs_7 bsampl_w bsample bsample_7 bsqreg bstat bstat_7 bstat_8 bstrap bstrap_7 ca ca_estat ca_p cabiplot camat canon canon_8 canon_8_p canon_estat canon_p cap caprojection capt captu captur capture cat cc cchart cchart_7 cci cd censobs_table centile cf char chdir checkdlgfiles checkestimationsample checkhlpfiles checksum chelp ci cii cl class classutil clear cli clis clist clo clog clog_lf clog_p clogi clogi_sw clogit clogit_lf clogit_p clogitp clogl_sw cloglog clonevar clslistarray cluster cluster_measures cluster_stop cluster_tree cluster_tree_8 clustermat cmdlog cnr cnre cnreg cnreg_p cnreg_sw cnsreg codebook collaps4 collapse colormult_nb colormult_nw compare compress conf confi confir confirm conren cons const constr constra constrai constrain constraint continue contract copy copyright copysource cor corc corr corr2data corr_anti corr_kmo corr_smc corre correl correla correlat correlate corrgram cou coun count cox cox_p cox_sw coxbase coxhaz coxvar cprplot cprplot_7 crc cret cretu cretur creturn cross cs cscript cscript_log csi ct ct_is ctset ctst_5 ctst_st cttost cumsp cumsp_7 cumul cusum cusum_7 cutil d datasig datasign datasigna datasignat datasignatu datasignatur datasignature datetof db dbeta de dec deco decod decode deff des desc descr descri describ describe destring dfbeta dfgls dfuller di di_g dir dirstats dis discard disp disp_res disp_s displ displa display distinct do doe doed doedi doedit dotplot dotplot_7 dprobit drawnorm drop ds ds_util dstdize duplicates durbina dwstat dydx e ed edi edit egen eivreg emdef en enc enco encod encode eq erase ereg ereg_lf ereg_p ereg_sw ereghet ereghet_glf ereghet_glf_sh ereghet_gp ereghet_ilf ereghet_ilf_sh ereghet_ip eret eretu eretur ereturn err erro error est est_cfexist est_cfname est_clickable est_expand est_hold est_table est_unhold est_unholdok estat estat_default estat_summ estat_vce_only esti estimates etodow etof etomdy ex exi exit expand expandcl fac fact facto factor factor_estat factor_p factor_pca_rotated factor_rotate factormat fcast fcast_compute fcast_graph fdades fdadesc fdadescr fdadescri fdadescrib fdadescribe fdasav fdasave fdause fh_st file open file read file close file filefilter fillin find_hlp_file findfile findit findit_7 fit fl fli flis flist for5_0 form forma format fpredict frac_154 frac_adj frac_chk frac_cox frac_ddp frac_dis frac_dv frac_in frac_mun frac_pp frac_pq frac_pv frac_wgt frac_xo fracgen fracplot fracplot_7 fracpoly fracpred fron_ex fron_hn fron_p fron_tn fron_tn2 frontier ftodate ftoe ftomdy ftowdate g gamhet_glf gamhet_gp gamhet_ilf gamhet_ip gamma gamma_d2 gamma_p gamma_sw gammahet gdi_hexagon gdi_spokes ge gen gene gener genera generat generate genrank genstd genvmean gettoken gl gladder gladder_7 glim_l01 glim_l02 glim_l03 glim_l04 glim_l05 glim_l06 glim_l07 glim_l08 glim_l09 glim_l10 glim_l11 glim_l12 glim_lf glim_mu glim_nw1 glim_nw2 glim_nw3 glim_p glim_v1 glim_v2 glim_v3 glim_v4 glim_v5 glim_v6 glim_v7 glm glm_6 glm_p glm_sw glmpred glo glob globa global glogit glogit_8 glogit_p gmeans gnbre_lf gnbreg gnbreg_5 gnbreg_p gomp_lf gompe_sw gomper_p gompertz gompertzhet gomphet_glf gomphet_glf_sh gomphet_gp gomphet_ilf gomphet_ilf_sh gomphet_ip gphdot gphpen gphprint gprefs gprobi_p gprobit gprobit_8 gr gr7 gr_copy gr_current gr_db gr_describe gr_dir gr_draw gr_draw_replay gr_drop gr_edit gr_editviewopts gr_example gr_example2 gr_export gr_print gr_qscheme gr_query gr_read gr_rename gr_replay gr_save gr_set gr_setscheme gr_table gr_undo gr_use graph graph7 grebar greigen greigen_7 greigen_8 grmeanby grmeanby_7 gs_fileinfo gs_filetype gs_graphinfo gs_stat gsort gwood h hadimvo hareg hausman haver he heck_d2 heckma_p heckman heckp_lf heckpr_p heckprob hel help hereg hetpr_lf hetpr_p hetprob hettest hexdump hilite hist hist_7 histogram hlogit hlu hmeans hotel hotelling hprobit hreg hsearch icd9 icd9_ff icd9p iis impute imtest inbase include inf infi infil infile infix inp inpu input ins insheet insp inspe inspec inspect integ inten intreg intreg_7 intreg_p intrg2_ll intrg_ll intrg_ll2 ipolate iqreg ir irf irf_create irfm iri is_svy is_svysum isid istdize ivprob_1_lf ivprob_lf ivprobit ivprobit_p ivreg ivreg_footnote ivtob_1_lf ivtob_lf ivtobit ivtobit_p jackknife jacknife jknife jknife_6 jknife_8 jkstat joinby kalarma1 kap kap_3 kapmeier kappa kapwgt kdensity kdensity_7 keep ksm ksmirnov ktau kwallis l la lab labe label labelbook ladder levels levelsof leverage lfit lfit_p li lincom line linktest lis list lloghet_glf lloghet_glf_sh lloghet_gp lloghet_ilf lloghet_ilf_sh lloghet_ip llogi_sw llogis_p llogist llogistic llogistichet lnorm_lf lnorm_sw lnorma_p lnormal lnormalhet lnormhet_glf lnormhet_glf_sh lnormhet_gp lnormhet_ilf lnormhet_ilf_sh lnormhet_ip lnskew0 loadingplot loc loca local log logi logis_lf logistic logistic_p logit logit_estat logit_p loglogs logrank loneway lookfor lookup lowess lowess_7 lpredict lrecomp lroc lroc_7 lrtest ls lsens lsens_7 lsens_x lstat ltable ltable_7 ltriang lv lvr2plot lvr2plot_7 m ma mac macr macro makecns man manova manova_estat manova_p manovatest mantel mark markin markout marksample mat mat_capp mat_order mat_put_rr mat_rapp mata mata_clear mata_describe mata_drop mata_matdescribe mata_matsave mata_matuse mata_memory mata_mlib mata_mosave mata_rename mata_which matalabel matcproc matlist matname matr matri matrix matrix_input__dlg matstrik mcc mcci md0_ md1_ md1debug_ md2_ md2debug_ mds mds_estat mds_p mdsconfig mdslong mdsmat mdsshepard mdytoe mdytof me_derd mean means median memory memsize meqparse mer merg merge mfp mfx mhelp mhodds minbound mixed_ll mixed_ll_reparm mkassert mkdir mkmat mkspline ml ml_5 ml_adjs ml_bhhhs ml_c_d ml_check ml_clear ml_cnt ml_debug ml_defd ml_e0 ml_e0_bfgs ml_e0_cycle ml_e0_dfp ml_e0i ml_e1 ml_e1_bfgs ml_e1_bhhh ml_e1_cycle ml_e1_dfp ml_e2 ml_e2_cycle ml_ebfg0 ml_ebfr0 ml_ebfr1 ml_ebh0q ml_ebhh0 ml_ebhr0 ml_ebr0i ml_ecr0i ml_edfp0 ml_edfr0 ml_edfr1 ml_edr0i ml_eds ml_eer0i ml_egr0i ml_elf ml_elf_bfgs ml_elf_bhhh ml_elf_cycle ml_elf_dfp ml_elfi ml_elfs ml_enr0i ml_enrr0 ml_erdu0 ml_erdu0_bfgs ml_erdu0_bhhh ml_erdu0_bhhhq ml_erdu0_cycle ml_erdu0_dfp ml_erdu0_nrbfgs ml_exde ml_footnote ml_geqnr ml_grad0 ml_graph ml_hbhhh ml_hd0 ml_hold ml_init ml_inv ml_log ml_max ml_mlout ml_mlout_8 ml_model ml_nb0 ml_opt ml_p ml_plot ml_query ml_rdgrd ml_repor ml_s_e ml_score ml_searc ml_technique ml_unhold mleval mlf_ mlmatbysum mlmatsum mlog mlogi mlogit mlogit_footnote mlogit_p mlopts mlsum mlvecsum mnl0_ mor more mov move mprobit mprobit_lf mprobit_p mrdu0_ mrdu1_ mvdecode mvencode mvreg mvreg_estat n nbreg nbreg_al nbreg_lf nbreg_p nbreg_sw nestreg net newey newey_7 newey_p news nl nl_7 nl_9 nl_9_p nl_p nl_p_7 nlcom nlcom_p nlexp2 nlexp2_7 nlexp2a nlexp2a_7 nlexp3 nlexp3_7 nlgom3 nlgom3_7 nlgom4 nlgom4_7 nlinit nllog3 nllog3_7 nllog4 nllog4_7 nlog_rd nlogit nlogit_p nlogitgen nlogittree nlpred no nobreak noi nois noisi noisil noisily note notes notes_dlg nptrend numlabel numlist odbc old_ver olo olog ologi ologi_sw ologit ologit_p ologitp on one onew onewa oneway op_colnm op_comp op_diff op_inv op_str opr opro oprob oprob_sw oprobi oprobi_p oprobit oprobitp opts_exclusive order orthog orthpoly ou out outf outfi outfil outfile outs outsh outshe outshee outsheet ovtest pac pac_7 palette parse parse_dissim pause pca pca_8 pca_display pca_estat pca_p pca_rotate pcamat pchart pchart_7 pchi pchi_7 pcorr pctile pentium pergram pergram_7 permute permute_8 personal peto_st pkcollapse pkcross pkequiv pkexamine pkexamine_7 pkshape pksumm pksumm_7 pl plo plot plugin pnorm pnorm_7 poisgof poiss_lf poiss_sw poisso_p poisson poisson_estat post postclose postfile postutil pperron pr prais prais_e prais_e2 prais_p predict predictnl preserve print pro prob probi probit probit_estat probit_p proc_time procoverlay procrustes procrustes_estat procrustes_p profiler prog progr progra program prop proportion prtest prtesti pwcorr pwd q\\s qby qbys qchi qchi_7 qladder qladder_7 qnorm qnorm_7 qqplot qqplot_7 qreg qreg_c qreg_p qreg_sw qu quadchk quantile quantile_7 que quer query range ranksum ratio rchart rchart_7 rcof recast reclink recode reg reg3 reg3_p regdw regr regre regre_p2 regres regres_p regress regress_estat regriv_p remap ren rena renam rename renpfix repeat replace report reshape restore ret retu retur return rm rmdir robvar roccomp roccomp_7 roccomp_8 rocf_lf rocfit rocfit_8 rocgold rocplot rocplot_7 roctab roctab_7 rolling rologit rologit_p rot rota rotat rotate rotatemat rreg rreg_p ru run runtest rvfplot rvfplot_7 rvpplot rvpplot_7 sa safesum sample sampsi sav save savedresults saveold sc sca scal scala scalar scatter scm_mine sco scob_lf scob_p scobi_sw scobit scor score scoreplot scoreplot_help scree screeplot screeplot_help sdtest sdtesti se search separate seperate serrbar serrbar_7 serset set set_defaults sfrancia sh she shel shell shewhart shewhart_7 signestimationsample signrank signtest simul simul_7 simulate simulate_8 sktest sleep slogit slogit_d2 slogit_p smooth snapspan so sor sort spearman spikeplot spikeplot_7 spikeplt spline_x split sqreg sqreg_p sret sretu sretur sreturn ssc st st_ct st_hc st_hcd st_hcd_sh st_is st_issys st_note st_promo st_set st_show st_smpl st_subid stack statsby statsby_8 stbase stci stci_7 stcox stcox_estat stcox_fr stcox_fr_ll stcox_p stcox_sw stcoxkm stcoxkm_7 stcstat stcurv stcurve stcurve_7 stdes stem stepwise stereg stfill stgen stir stjoin stmc stmh stphplot stphplot_7 stphtest stphtest_7 stptime strate strate_7 streg streg_sw streset sts sts_7 stset stsplit stsum sttocc sttoct stvary stweib su suest suest_8 sum summ summa summar summari summariz summarize sunflower sureg survcurv survsum svar svar_p svmat svy svy_disp svy_dreg svy_est svy_est_7 svy_estat svy_get svy_gnbreg_p svy_head svy_header svy_heckman_p svy_heckprob_p svy_intreg_p svy_ivreg_p svy_logistic_p svy_logit_p svy_mlogit_p svy_nbreg_p svy_ologit_p svy_oprobit_p svy_poisson_p svy_probit_p svy_regress_p svy_sub svy_sub_7 svy_x svy_x_7 svy_x_p svydes svydes_8 svygen svygnbreg svyheckman svyheckprob svyintreg svyintreg_7 svyintrg svyivreg svylc svylog_p svylogit svymarkout svymarkout_8 svymean svymlog svymlogit svynbreg svyolog svyologit svyoprob svyoprobit svyopts svypois svypois_7 svypoisson svyprobit svyprobt svyprop svyprop_7 svyratio svyreg svyreg_p svyregress svyset svyset_7 svyset_8 svytab svytab_7 svytest svytotal sw sw_8 swcnreg swcox swereg swilk swlogis swlogit swologit swoprbt swpois swprobit swqreg swtobit swweib symmetry symmi symplot symplot_7 syntax sysdescribe sysdir sysuse szroeter ta tab tab1 tab2 tab_or tabd tabdi tabdis tabdisp tabi table tabodds tabodds_7 tabstat tabu tabul tabula tabulat tabulate te tempfile tempname tempvar tes test testnl testparm teststd tetrachoric time_it timer tis tob tobi tobit tobit_p tobit_sw token tokeni tokeniz tokenize tostring total translate translator transmap treat_ll treatr_p treatreg trim trnb_cons trnb_mean trpoiss_d2 trunc_ll truncr_p truncreg tsappend tset tsfill tsline tsline_ex tsreport tsrevar tsrline tsset tssmooth tsunab ttest ttesti tut_chk tut_wait tutorial tw tware_st two twoway twoway__fpfit_serset twoway__function_gen twoway__histogram_gen twoway__ipoint_serset twoway__ipoints_serset twoway__kdensity_gen twoway__lfit_serset twoway__normgen_gen twoway__pci_serset twoway__qfit_serset twoway__scatteri_serset twoway__sunflower_gen twoway_ksm_serset ty typ type typeof u unab unabbrev unabcmd update us use uselabel var var_mkcompanion var_p varbasic varfcast vargranger varirf varirf_add varirf_cgraph varirf_create varirf_ctable varirf_describe varirf_dir varirf_drop varirf_erase varirf_graph varirf_ograph varirf_rename varirf_set varirf_table varlist varlmar varnorm varsoc varstable varstable_w varstable_w2 varwle vce vec vec_fevd vec_mkphi vec_p vec_p_w vecirf_create veclmar veclmar_w vecnorm vecnorm_w vecrank vecstable verinst vers versi versio version view viewsource vif vwls wdatetof webdescribe webseek webuse weib1_lf weib2_lf weib_lf weib_lf0 weibhet_glf weibhet_glf_sh weibhet_glfa weibhet_glfa_sh weibhet_gp weibhet_ilf weibhet_ilf_sh weibhet_ilfa weibhet_ilfa_sh weibhet_ip weibu_sw weibul_p weibull weibull_c weibull_s weibullhet wh whelp whi which whil while wilc_st wilcoxon win wind windo window winexec wntestb wntestb_7 wntestq xchart xchart_7 xcorr xcorr_7 xi xi_6 xmlsav xmlsave xmluse xpose xsh xshe xshel xshell xt_iis xt_tis xtab_p xtabond xtbin_p xtclog xtcloglog xtcloglog_8 xtcloglog_d2 xtcloglog_pa_p xtcloglog_re_p xtcnt_p xtcorr xtdata xtdes xtfront_p xtfrontier xtgee xtgee_elink xtgee_estat xtgee_makeivar xtgee_p xtgee_plink xtgls xtgls_p xthaus xthausman xtht_p xthtaylor xtile xtint_p xtintreg xtintreg_8 xtintreg_d2 xtintreg_p xtivp_1 xtivp_2 xtivreg xtline xtline_ex xtlogit xtlogit_8 xtlogit_d2 xtlogit_fe_p xtlogit_pa_p xtlogit_re_p xtmixed xtmixed_estat xtmixed_p xtnb_fe xtnb_lf xtnbreg xtnbreg_pa_p xtnbreg_refe_p xtpcse xtpcse_p xtpois xtpoisson xtpoisson_d2 xtpoisson_pa_p xtpoisson_refe_p xtpred xtprobit xtprobit_8 xtprobit_d2 xtprobit_re_p xtps_fe xtps_lf xtps_ren xtps_ren_8 xtrar_p xtrc xtrc_p xtrchh xtrefe_p xtreg xtreg_be xtreg_fe xtreg_ml xtreg_pa_p xtreg_re xtregar xtrere_p xtset xtsf_ll xtsf_llti xtsum xttab xttest0 xttobit xttobit_8 xttobit_p xttrans yx yxview__barlike_draw yxview_area_draw yxview_bar_draw yxview_dot_draw yxview_dropline_draw yxview_function_draw yxview_iarrow_draw yxview_ilabels_draw yxview_normal_draw yxview_pcarrow_draw yxview_pcbarrow_draw yxview_pccapsym_draw yxview_pcscatter_draw yxview_pcspike_draw yxview_rarea_draw yxview_rbar_draw yxview_rbarm_draw yxview_rcap_draw yxview_rcapsym_draw yxview_rconnected_draw yxview_rline_draw yxview_rscatter_draw yxview_rspike_draw yxview_spike_draw yxview_sunflower_draw zap_s zinb zinb_llf zinb_plf zip zip_llf zip_p zip_plf zt_ct_5 zt_hc_5 zt_hcd_5 zt_is_5 zt_iss_5 zt_sho_5 zt_smp_5 ztbase_5 ztcox_5 ztdes_5 ztereg_5 ztfill_5 ztgen_5 ztir_5 ztjoin_5 ztnb ztnb_p ztp ztp_p zts_5 ztset_5 ztspli_5 ztsum_5 zttoct_5 ztvary_5 ztweib_5',
+        contains: [
+      {
+        className: 'label',
+        variants: [
+          {begin: "\\$\\{?[a-zA-Z0-9_]+\\}?"},
+          {begin: "`[a-zA-Z0-9_]+'"}
+
+        ]
+      },
+      {
+        className: 'string',
+        variants: [
+          {begin: '`"[^\r\n]*?"\''},
+          {begin: '"[^\r\n"]*"'}
+        ]
+      },
+
+      {
+        className: 'literal',
+        variants: [
+          {
+            begin: '\\b(abs|acos|asin|atan|atan2|atanh|ceil|cloglog|comb|cos|digamma|exp|floor|invcloglog|invlogit|ln|lnfact|lnfactorial|lngamma|log|log10|max|min|mod|reldif|round|sign|sin|sqrt|sum|tan|tanh|trigamma|trunc|betaden|Binomial|binorm|binormal|chi2|chi2tail|dgammapda|dgammapdada|dgammapdadx|dgammapdx|dgammapdxdx|F|Fden|Ftail|gammaden|gammap|ibeta|invbinomial|invchi2|invchi2tail|invF|invFtail|invgammap|invibeta|invnchi2|invnFtail|invnibeta|invnorm|invnormal|invttail|nbetaden|nchi2|nFden|nFtail|nibeta|norm|normal|normalden|normd|npnchi2|tden|ttail|uniform|abbrev|char|index|indexnot|length|lower|ltrim|match|plural|proper|real|regexm|regexr|regexs|reverse|rtrim|string|strlen|strlower|strltrim|strmatch|strofreal|strpos|strproper|strreverse|strrtrim|strtrim|strupper|subinstr|subinword|substr|trim|upper|word|wordcount|_caller|autocode|byteorder|chop|clip|cond|e|epsdouble|epsfloat|group|inlist|inrange|irecode|matrix|maxbyte|maxdouble|maxfloat|maxint|maxlong|mi|minbyte|mindouble|minfloat|minint|minlong|missing|r|recode|replay|return|s|scalar|d|date|day|dow|doy|halfyear|mdy|month|quarter|week|year|d|daily|dofd|dofh|dofm|dofq|dofw|dofy|h|halfyearly|hofd|m|mofd|monthly|q|qofd|quarterly|tin|twithin|w|weekly|wofd|y|yearly|yh|ym|yofd|yq|yw|cholesky|colnumb|colsof|corr|det|diag|diag0cnt|el|get|hadamard|I|inv|invsym|issym|issymmetric|J|matmissing|matuniform|mreldif|nullmat|rownumb|rowsof|sweep|syminv|trace|vec|vecdiag)(?=\\(|$)'
+          }
+        ]
+      },
+
+      hljs.COMMENT('^[ \t]*\\*.*$', false),
+      hljs.C_LINE_COMMENT_MODE,
+      hljs.C_BLOCK_COMMENT_MODE
+    ]
+  };
+};
+},{}],119:[function(require,module,exports){
+module.exports = function(hljs) {
+  var STEP21_IDENT_RE = '[A-Z_][A-Z0-9_.]*';
+  var STEP21_CLOSE_RE = 'END-ISO-10303-21;';
+  var STEP21_KEYWORDS = {
+    literal: '',
+    built_in: '',
+    keyword:
+    'HEADER ENDSEC DATA'
+  };
+  var STEP21_START = {
+    className: 'preprocessor',
+    begin: 'ISO-10303-21;',
+    relevance: 10
+  };
+  var STEP21_CODE = [
+    hljs.C_LINE_COMMENT_MODE,
+    hljs.C_BLOCK_COMMENT_MODE,
+    hljs.COMMENT('/\\*\\*!', '\\*/'),
+    hljs.C_NUMBER_MODE,
+    hljs.inherit(hljs.APOS_STRING_MODE, {illegal: null}),
+    hljs.inherit(hljs.QUOTE_STRING_MODE, {illegal: null}),
+    {
+      className: 'string',
+      begin: "'", end: "'"
+    },
+    {
+      className: 'label',
+      variants: [
+        {
+          begin: '#', end: '\\d+',
+          illegal: '\\W'
+        }
+      ]
+    }
+  ];
+
+  return {
+    aliases: ['p21', 'step', 'stp'],
+    case_insensitive: true, // STEP 21 is case insensitive in theory, in practice all non-comments are capitalized.
+    lexemes: STEP21_IDENT_RE,
+    keywords: STEP21_KEYWORDS,
+    contains: [
+      {
+        className: 'preprocessor',
+        begin: STEP21_CLOSE_RE,
+        relevance: 10
+      },
+      STEP21_START
+    ].concat(STEP21_CODE)
+  };
+};
+},{}],120:[function(require,module,exports){
+module.exports = function(hljs) {
+
+  var VARIABLE = {
+    className: 'variable',
+    begin: '\\$' + hljs.IDENT_RE
+  };
+
+  var HEX_COLOR = {
+    className: 'hexcolor',
+    begin: '#([a-fA-F0-9]{6}|[a-fA-F0-9]{3})',
+    relevance: 10
+  };
+
+  var AT_KEYWORDS = [
+    'charset',
+    'css',
+    'debug',
+    'extend',
+    'font-face',
+    'for',
+    'import',
+    'include',
+    'media',
+    'mixin',
+    'page',
+    'warn',
+    'while'
+  ];
+
+  var PSEUDO_SELECTORS = [
+    'after',
+    'before',
+    'first-letter',
+    'first-line',
+    'active',
+    'first-child',
+    'focus',
+    'hover',
+    'lang',
+    'link',
+    'visited'
+  ];
+
+  var TAGS = [
+    'a',
+    'abbr',
+    'address',
+    'article',
+    'aside',
+    'audio',
+    'b',
+    'blockquote',
+    'body',
+    'button',
+    'canvas',
+    'caption',
+    'cite',
+    'code',
+    'dd',
+    'del',
+    'details',
+    'dfn',
+    'div',
+    'dl',
+    'dt',
+    'em',
+    'fieldset',
+    'figcaption',
+    'figure',
+    'footer',
+    'form',
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'h5',
+    'h6',
+    'header',
+    'hgroup',
+    'html',
+    'i',
+    'iframe',
+    'img',
+    'input',
+    'ins',
+    'kbd',
+    'label',
+    'legend',
+    'li',
+    'mark',
+    'menu',
+    'nav',
+    'object',
+    'ol',
+    'p',
+    'q',
+    'quote',
+    'samp',
+    'section',
+    'span',
+    'strong',
+    'summary',
+    'sup',
+    'table',
+    'tbody',
+    'td',
+    'textarea',
+    'tfoot',
+    'th',
+    'thead',
+    'time',
+    'tr',
+    'ul',
+    'var',
+    'video'
+  ];
+
+  var TAG_END = '[\\.\\s\\n\\[\\:,]';
+
+  var ATTRIBUTES = [
+    'align-content',
+    'align-items',
+    'align-self',
+    'animation',
+    'animation-delay',
+    'animation-direction',
+    'animation-duration',
+    'animation-fill-mode',
+    'animation-iteration-count',
+    'animation-name',
+    'animation-play-state',
+    'animation-timing-function',
+    'auto',
+    'backface-visibility',
+    'background',
+    'background-attachment',
+    'background-clip',
+    'background-color',
+    'background-image',
+    'background-origin',
+    'background-position',
+    'background-repeat',
+    'background-size',
+    'border',
+    'border-bottom',
+    'border-bottom-color',
+    'border-bottom-left-radius',
+    'border-bottom-right-radius',
+    'border-bottom-style',
+    'border-bottom-width',
+    'border-collapse',
+    'border-color',
+    'border-image',
+    'border-image-outset',
+    'border-image-repeat',
+    'border-image-slice',
+    'border-image-source',
+    'border-image-width',
+    'border-left',
+    'border-left-color',
+    'border-left-style',
+    'border-left-width',
+    'border-radius',
+    'border-right',
+    'border-right-color',
+    'border-right-style',
+    'border-right-width',
+    'border-spacing',
+    'border-style',
+    'border-top',
+    'border-top-color',
+    'border-top-left-radius',
+    'border-top-right-radius',
+    'border-top-style',
+    'border-top-width',
+    'border-width',
+    'bottom',
+    'box-decoration-break',
+    'box-shadow',
+    'box-sizing',
+    'break-after',
+    'break-before',
+    'break-inside',
+    'caption-side',
+    'clear',
+    'clip',
+    'clip-path',
+    'color',
+    'column-count',
+    'column-fill',
+    'column-gap',
+    'column-rule',
+    'column-rule-color',
+    'column-rule-style',
+    'column-rule-width',
+    'column-span',
+    'column-width',
+    'columns',
+    'content',
+    'counter-increment',
+    'counter-reset',
+    'cursor',
+    'direction',
+    'display',
+    'empty-cells',
+    'filter',
+    'flex',
+    'flex-basis',
+    'flex-direction',
+    'flex-flow',
+    'flex-grow',
+    'flex-shrink',
+    'flex-wrap',
+    'float',
+    'font',
+    'font-family',
+    'font-feature-settings',
+    'font-kerning',
+    'font-language-override',
+    'font-size',
+    'font-size-adjust',
+    'font-stretch',
+    'font-style',
+    'font-variant',
+    'font-variant-ligatures',
+    'font-weight',
+    'height',
+    'hyphens',
+    'icon',
+    'image-orientation',
+    'image-rendering',
+    'image-resolution',
+    'ime-mode',
+    'inherit',
+    'initial',
+    'justify-content',
+    'left',
+    'letter-spacing',
+    'line-height',
+    'list-style',
+    'list-style-image',
+    'list-style-position',
+    'list-style-type',
+    'margin',
+    'margin-bottom',
+    'margin-left',
+    'margin-right',
+    'margin-top',
+    'marks',
+    'mask',
+    'max-height',
+    'max-width',
+    'min-height',
+    'min-width',
+    'nav-down',
+    'nav-index',
+    'nav-left',
+    'nav-right',
+    'nav-up',
+    'none',
+    'normal',
+    'object-fit',
+    'object-position',
+    'opacity',
+    'order',
+    'orphans',
+    'outline',
+    'outline-color',
+    'outline-offset',
+    'outline-style',
+    'outline-width',
+    'overflow',
+    'overflow-wrap',
+    'overflow-x',
+    'overflow-y',
+    'padding',
+    'padding-bottom',
+    'padding-left',
+    'padding-right',
+    'padding-top',
+    'page-break-after',
+    'page-break-before',
+    'page-break-inside',
+    'perspective',
+    'perspective-origin',
+    'pointer-events',
+    'position',
+    'quotes',
+    'resize',
+    'right',
+    'tab-size',
+    'table-layout',
+    'text-align',
+    'text-align-last',
+    'text-decoration',
+    'text-decoration-color',
+    'text-decoration-line',
+    'text-decoration-style',
+    'text-indent',
+    'text-overflow',
+    'text-rendering',
+    'text-shadow',
+    'text-transform',
+    'text-underline-position',
+    'top',
+    'transform',
+    'transform-origin',
+    'transform-style',
+    'transition',
+    'transition-delay',
+    'transition-duration',
+    'transition-property',
+    'transition-timing-function',
+    'unicode-bidi',
+    'vertical-align',
+    'visibility',
+    'white-space',
+    'widows',
+    'width',
+    'word-break',
+    'word-spacing',
+    'word-wrap',
+    'z-index'
+  ];
+
+  // illegals
+  var ILLEGAL = [
+    '\\{',
+    '\\}',
+    '\\?',
+    '(\\bReturn\\b)', // monkey
+    '(\\bEnd\\b)', // monkey
+    '(\\bend\\b)', // vbscript
+    ';', // sql
+    '#\\s', // markdown
+    '\\*\\s', // markdown
+    '===\\s', // markdown
+    '\\|',
+    '%', // prolog
+  ];
+
+  return {
+    aliases: ['styl'],
+    case_insensitive: false,
+    illegal: '(' + ILLEGAL.join('|') + ')',
+    keywords: 'if else for in',
+    contains: [
+
+      // strings
+      hljs.QUOTE_STRING_MODE,
+      hljs.APOS_STRING_MODE,
+
+      // comments
+      hljs.C_LINE_COMMENT_MODE,
+      hljs.C_BLOCK_COMMENT_MODE,
+
+      // hex colors
+      HEX_COLOR,
+
+      // class tag
+      {
+        begin: '\\.[a-zA-Z][a-zA-Z0-9_-]*' + TAG_END,
+        returnBegin: true,
+        contains: [
+          {className: 'class', begin: '\\.[a-zA-Z][a-zA-Z0-9_-]*'}
+        ]
+      },
+
+      // id tag
+      {
+        begin: '\\#[a-zA-Z][a-zA-Z0-9_-]*' + TAG_END,
+        returnBegin: true,
+        contains: [
+          {className: 'id', begin: '\\#[a-zA-Z][a-zA-Z0-9_-]*'}
+        ]
+      },
+
+      // tags
+      {
+        begin: '\\b(' + TAGS.join('|') + ')' + TAG_END,
+        returnBegin: true,
+        contains: [
+          {className: 'tag', begin: '\\b[a-zA-Z][a-zA-Z0-9_-]*'}
+        ]
+      },
+
+      // psuedo selectors
+      {
+        className: 'pseudo',
+        begin: '&?:?:\\b(' + PSEUDO_SELECTORS.join('|') + ')' + TAG_END
+      },
+
+      // @ keywords
+      {
+        className: 'at_rule',
+        begin: '\@(' + AT_KEYWORDS.join('|') + ')\\b'
+      },
+
+      // variables
+      VARIABLE,
+
+      // dimension
+      hljs.CSS_NUMBER_MODE,
+
+      // number
+      hljs.NUMBER_MODE,
+
+      // functions
+      //  - only from beginning of line + whitespace
+      {
+        className: 'function',
+        begin: '\\b[a-zA-Z][a-zA-Z0-9_\-]*\\(.*\\)',
+        illegal: '[\\n]',
+        returnBegin: true,
+        contains: [
+          {className: 'title', begin: '\\b[a-zA-Z][a-zA-Z0-9_\-]*'},
+          {
+            className: 'params',
+            begin: /\(/,
+            end: /\)/,
+            contains: [
+              HEX_COLOR,
+              VARIABLE,
+              hljs.APOS_STRING_MODE,
+              hljs.CSS_NUMBER_MODE,
+              hljs.NUMBER_MODE,
+              hljs.QUOTE_STRING_MODE
+            ]
+          }
+        ]
+      },
+
+      // attributes
+      //  - only from beginning of line + whitespace
+      //  - must have whitespace after it
+      {
+        className: 'attribute',
+        begin: '\\b(' + ATTRIBUTES.reverse().join('|') + ')\\b'
+      }
+    ]
+  };
+};
+},{}],121:[function(require,module,exports){
 module.exports = function(hljs) {
   var SWIFT_KEYWORDS = {
-      keyword: 'class deinit enum extension func import init let protocol static ' +
-        'struct subscript typealias var break case continue default do ' +
-        'else fallthrough if in for return switch where while as dynamicType ' +
-        'is new super self Self Type __COLUMN__ __FILE__ __FUNCTION__ ' +
-        '__LINE__ associativity didSet get infix inout left mutating none ' +
-        'nonmutating operator override postfix precedence prefix right set '+
-        'unowned unowned safe unsafe weak willSet',
+      keyword: '__COLUMN__ __FILE__ __FUNCTION__ __LINE__ as as! as? associativity ' +
+        'break case catch class continue convenience default defer deinit didSet do ' +
+        'dynamic dynamicType else enum extension fallthrough false final for func ' +
+        'get guard if import in indirect infix init inout internal is lazy left let ' +
+        'mutating nil none nonmutating operator optional override postfix precedence ' +
+        'prefix private protocol Protocol public repeat required rethrows return ' +
+        'right self Self set static struct subscript super switch throw throws true ' +
+        'try try! try? Type typealias unowned var weak where while willSet',
       literal: 'true false nil',
-      built_in: 'abs advance alignof alignofValue assert bridgeFromObjectiveC ' +
-        'bridgeFromObjectiveCUnconditional bridgeToObjectiveC ' +
-        'bridgeToObjectiveCUnconditional c contains count countElements ' +
-        'countLeadingZeros debugPrint debugPrintln distance dropFirst dropLast dump ' +
-        'encodeBitsAsWords enumerate equal false filter find getBridgedObjectiveCType ' +
-        'getVaList indices insertionSort isBridgedToObjectiveC ' +
-        'isBridgedVerbatimToObjectiveC isUniquelyReferenced join ' +
-        'lexicographicalCompare map max maxElement min minElement nil numericCast ' +
-        'partition posix print println quickSort reduce reflect reinterpretCast ' +
-        'reverse roundUpToAlignment sizeof sizeofValue sort split startsWith strideof ' +
-        'strideofValue swap swift toString transcode true underestimateCount ' +
+      built_in: 'abs advance alignof alignofValue anyGenerator assert assertionFailure ' +
+        'bridgeFromObjectiveC bridgeFromObjectiveCUnconditional bridgeToObjectiveC ' +
+        'bridgeToObjectiveCUnconditional c contains count countElements countLeadingZeros ' +
+        'debugPrint debugPrintln distance dropFirst dropLast dump encodeBitsAsWords ' +
+        'enumerate equal fatalError filter find getBridgedObjectiveCType getVaList ' +
+        'indices insertionSort isBridgedToObjectiveC isBridgedVerbatimToObjectiveC ' +
+        'isUniquelyReferenced isUniquelyReferencedNonObjC join lazy lexicographicalCompare ' +
+        'map max maxElement min minElement numericCast overlaps partition posix ' +
+        'precondition preconditionFailure print println quickSort readLine reduce reflect ' +
+        'reinterpretCast reverse roundUpToAlignment sizeof sizeofValue sort split ' +
+        'startsWith stride strideof strideofValue swap toString transcode ' +
+        'underestimateCount unsafeAddressOf unsafeBitCast unsafeDowncast unsafeUnwrap ' +
         'unsafeReflect withExtendedLifetime withObjectAtPlusZero withUnsafePointer ' +
-        'withUnsafePointerToObject withUnsafePointers withVaList'
+        'withUnsafePointerToObject withUnsafeMutablePointer withUnsafeMutablePointers ' +
+        'withUnsafePointer withUnsafePointers withVaList zip'
     };
 
   var TYPE = {
@@ -7109,11 +12395,13 @@ module.exports = function(hljs) {
     begin: '\\b[A-Z][\\w\']*',
     relevance: 0
   };
-  var BLOCK_COMMENT = {
-    className: 'comment',
-    begin: '/\\*', end: '\\*/',
-    contains: [hljs.PHRASAL_WORDS_MODE, 'self']
-  };
+  var BLOCK_COMMENT = hljs.COMMENT(
+    '/\\*',
+    '\\*/',
+    {
+      contains: ['self']
+    }
+  );
   var SUBST = {
     className: 'subst',
     begin: /\\\(/, end: '\\)',
@@ -7148,12 +12436,12 @@ module.exports = function(hljs) {
           }),
           {
             className: 'generics',
-            begin: /\</, end: /\>/,
-            illegal: /\>/
+            begin: /</, end: />/,
+            illegal: />/
           },
           {
             className: 'params',
-            begin: /\(/, end: /\)/,
+            begin: /\(/, end: /\)/, endsParent: true,
             keywords: SWIFT_KEYWORDS,
             contains: [
               'self',
@@ -7169,8 +12457,8 @@ module.exports = function(hljs) {
       },
       {
         className: 'class',
-        keywords: 'struct protocol class extension enum',
-        begin: '(struct|protocol|class(?! (func|var))|extension|enum)',
+        beginKeywords: 'struct protocol class extension enum',
+        keywords: SWIFT_KEYWORDS,
         end: '\\{',
         excludeEnd: true,
         contains: [
@@ -7179,15 +12467,83 @@ module.exports = function(hljs) {
       },
       {
         className: 'preprocessor', // @attributes
-        begin: '(@assignment|@class_protocol|@exported|@final|@lazy|@noreturn|' +
-                  '@NSCopying|@NSManaged|@objc|@optional|@required|@auto_closure|' +
+        begin: '(@warn_unused_result|@exported|@lazy|@noescape|' +
+                  '@NSCopying|@NSManaged|@objc|@convention|@required|' +
                   '@noreturn|@IBAction|@IBDesignable|@IBInspectable|@IBOutlet|' +
-                  '@infix|@prefix|@postfix)'
+                  '@infix|@prefix|@postfix|@autoclosure|@testable|@available|' +
+                  '@nonobjc|@NSApplicationMain|@UIApplicationMain)'
+
       },
+      {
+        beginKeywords: 'import', end: /$/,
+        contains: [hljs.C_LINE_COMMENT_MODE, BLOCK_COMMENT]
+      }
     ]
   };
 };
-},{}],85:[function(require,module,exports){
+},{}],122:[function(require,module,exports){
+module.exports = function(hljs) {
+  return {
+    aliases: ['tk'],
+    keywords: 'after append apply array auto_execok auto_import auto_load auto_mkindex ' +
+      'auto_mkindex_old auto_qualify auto_reset bgerror binary break catch cd chan clock ' +
+      'close concat continue dde dict encoding eof error eval exec exit expr fblocked ' +
+      'fconfigure fcopy file fileevent filename flush for foreach format gets glob global ' +
+      'history http if incr info interp join lappend|10 lassign|10 lindex|10 linsert|10 list ' +
+      'llength|10 load lrange|10 lrepeat|10 lreplace|10 lreverse|10 lsearch|10 lset|10 lsort|10 '+
+      'mathfunc mathop memory msgcat namespace open package parray pid pkg::create pkg_mkIndex '+
+      'platform platform::shell proc puts pwd read refchan regexp registry regsub|10 rename '+
+      'return safe scan seek set socket source split string subst switch tcl_endOfWord '+
+      'tcl_findLibrary tcl_startOfNextWord tcl_startOfPreviousWord tcl_wordBreakAfter '+
+      'tcl_wordBreakBefore tcltest tclvars tell time tm trace unknown unload unset update '+
+      'uplevel upvar variable vwait while',
+    contains: [
+      hljs.COMMENT(';[ \\t]*#', '$'),
+      hljs.COMMENT('^[ \\t]*#', '$'),
+      {
+        beginKeywords: 'proc',
+        end: '[\\{]',
+        excludeEnd: true,
+        contains: [
+          {
+            className: 'symbol',
+            begin: '[ \\t\\n\\r]+(::)?[a-zA-Z_]((::)?[a-zA-Z0-9_])*',
+            end: '[ \\t\\n\\r]',
+            endsWithParent: true,
+            excludeEnd: true
+          }
+        ]
+      },
+      {
+        className: 'variable',
+        excludeEnd: true,
+        variants: [
+          {
+            begin: '\\$(\\{)?(::)?[a-zA-Z_]((::)?[a-zA-Z0-9_])*\\(([a-zA-Z0-9_])*\\)',
+            end: '[^a-zA-Z0-9_\\}\\$]'
+          },
+          {
+            begin: '\\$(\\{)?(::)?[a-zA-Z_]((::)?[a-zA-Z0-9_])*',
+            end: '(\\))?[^a-zA-Z0-9_\\}\\$]'
+          }
+        ]
+      },
+      {
+        className: 'string',
+        contains: [hljs.BACKSLASH_ESCAPE],
+        variants: [
+          hljs.inherit(hljs.APOS_STRING_MODE, {illegal: null}),
+          hljs.inherit(hljs.QUOTE_STRING_MODE, {illegal: null})
+        ]
+      },
+      {
+        className: 'number',
+        variants: [hljs.BINARY_NUMBER_MODE, hljs.C_NUMBER_MODE]
+      }
+    ]
+  }
+};
+},{}],123:[function(require,module,exports){
 module.exports = function(hljs) {
   var COMMAND1 = {
     className: 'command',
@@ -7232,15 +12588,17 @@ module.exports = function(hljs) {
         contains: [COMMAND1, COMMAND2, SPECIAL],
         relevance: 0
       },
-      {
-        className: 'comment',
-        begin: '%', end: '$',
-        relevance: 0
-      }
+      hljs.COMMENT(
+        '%',
+        '$',
+        {
+          relevance: 0
+        }
+      )
     ]
   };
 };
-},{}],86:[function(require,module,exports){
+},{}],124:[function(require,module,exports){
 module.exports = function(hljs) {
   var BUILT_IN_TYPES = 'bool byte i16 i32 i64 double string binary';
   return {
@@ -7268,7 +12626,6 @@ module.exports = function(hljs) {
         ]
       },
       {
-        className: 'stl_container',
         begin: '\\b(set|list|map)\\s*<', end: '>',
         keywords: BUILT_IN_TYPES,
         contains: ['self']
@@ -7276,61 +12633,212 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],87:[function(require,module,exports){
+},{}],125:[function(require,module,exports){
 module.exports = function(hljs) {
+  var TPID = {
+    className: 'number',
+    begin: '[1-9][0-9]*', /* no leading zeros */
+    relevance: 0
+  };
+  var TPLABEL = {
+    className: 'comment',
+    begin: ':[^\\]]+'
+  };
+  var TPDATA = {
+    className: 'built_in',
+    begin: '(AR|P|PAYLOAD|PR|R|SR|RSR|LBL|VR|UALM|MESSAGE|UTOOL|UFRAME|TIMER|\
+    TIMER_OVERFLOW|JOINT_MAX_SPEED|RESUME_PROG|DIAG_REC)\\[', end: '\\]',
+    contains: [
+      'self',
+      TPID,
+      TPLABEL
+    ]
+  };
+  var TPIO = {
+    className: 'built_in',
+    begin: '(AI|AO|DI|DO|F|RI|RO|UI|UO|GI|GO|SI|SO)\\[', end: '\\]',
+    contains: [
+      'self',
+      TPID,
+      hljs.QUOTE_STRING_MODE, /* for pos section at bottom */
+      TPLABEL
+    ]
+  };
+
   return {
-    aliases: ['ts'],
     keywords: {
       keyword:
-        'in if for while finally var new function|0 do return void else break catch ' +
-        'instanceof with throw case default try this switch continue typeof delete ' +
-        'let yield const class public private get set super interface extends' +
-        'static constructor implements enum export import declare',
-      literal:
-        'true false null undefined NaN Infinity',
-      built_in:
-        'eval isFinite isNaN parseFloat parseInt decodeURI decodeURIComponent ' +
-        'encodeURI encodeURIComponent escape unescape Object Function Boolean Error ' +
-        'EvalError InternalError RangeError ReferenceError StopIteration SyntaxError ' +
-        'TypeError URIError Number Math Date String RegExp Array Float32Array ' +
-        'Float64Array Int16Array Int32Array Int8Array Uint16Array Uint32Array ' +
-        'Uint8Array Uint8ClampedArray ArrayBuffer DataView JSON Intl arguments require ' +
-        'module console window document any number boolean string void',
+        'ABORT ACC ADJUST AND AP_LD BREAK CALL CNT COL CONDITION CONFIG DA DB ' +
+        'DIV DETECT ELSE END ENDFOR ERR_NUM ERROR_PROG FINE FOR GP GUARD INC ' +
+        'IF JMP LINEAR_MAX_SPEED LOCK MOD MONITOR OFFSET Offset OR OVERRIDE ' +
+        'PAUSE PREG PTH RT_LD RUN SELECT SKIP Skip TA TB TO TOOL_OFFSET ' +
+        'Tool_Offset UF UT UFRAME_NUM UTOOL_NUM UNLOCK WAIT X Y Z W P R STRLEN ' +
+        'SUBSTR FINDSTR VOFFSET',
+      constant:
+        'ON OFF max_speed LPOS JPOS ENABLE DISABLE START STOP RESET'
     },
+    contains: [
+      TPDATA,
+      TPIO,
+      {
+        className: 'keyword',
+        begin: '/(PROG|ATTR|MN|POS|END)\\b'
+      },
+      {
+        /* this is for cases like ,CALL */
+        className: 'keyword',
+        begin: '(CALL|RUN|POINT_LOGIC|LBL)\\b'
+      },
+      {
+        /* this is for cases like CNT100 where the default lexemes do not
+         * separate the keyword and the number */
+        className: 'keyword',
+        begin: '\\b(ACC|CNT|Skip|Offset|PSPD|RT_LD|AP_LD|Tool_Offset)'
+      },
+      {
+        /* to catch numbers that do not have a word boundary on the left */
+        className: 'number',
+        begin: '\\d+(sec|msec|mm/sec|cm/min|inch/min|deg/sec|mm|in|cm)?\\b',
+        relevance: 0
+      },
+      hljs.COMMENT('//', '[;$]'),
+      hljs.COMMENT('!', '[;$]'),
+      hljs.COMMENT('--eg:', '$'),
+      hljs.QUOTE_STRING_MODE,
+      {
+        className: 'string',
+        begin: '\'', end: '\''
+      },
+      hljs.C_NUMBER_MODE,
+      {
+        className: 'variable',
+        begin: '\\$[A-Za-z0-9_]+'
+      }
+    ]
+  };
+};
+},{}],126:[function(require,module,exports){
+module.exports = function(hljs) {
+  var PARAMS = {
+    className: 'params',
+    begin: '\\(', end: '\\)'
+  };
+
+  var FUNCTION_NAMES = 'attribute block constant cycle date dump include ' +
+                  'max min parent random range source template_from_string';
+
+  var FUNCTIONS = {
+    className: 'function',
+    beginKeywords: FUNCTION_NAMES,
+    relevance: 0,
+    contains: [
+      PARAMS
+    ]
+  };
+
+  var FILTER = {
+    className: 'filter',
+    begin: /\|[A-Za-z_]+:?/,
+    keywords:
+      'abs batch capitalize convert_encoding date date_modify default ' +
+      'escape first format join json_encode keys last length lower ' +
+      'merge nl2br number_format raw replace reverse round slice sort split ' +
+      'striptags title trim upper url_encode',
+    contains: [
+      FUNCTIONS
+    ]
+  };
+
+  var TAGS = 'autoescape block do embed extends filter flush for ' +
+    'if import include macro sandbox set spaceless use verbatim';
+
+  TAGS = TAGS + ' ' + TAGS.split(' ').map(function(t){return 'end' + t}).join(' ');
+
+  return {
+    aliases: ['craftcms'],
+    case_insensitive: true,
+    subLanguage: 'xml',
+    contains: [
+      hljs.COMMENT(/\{#/, /#}/),
+      {
+        className: 'template_tag',
+        begin: /\{%/, end: /%}/,
+        keywords: TAGS,
+        contains: [FILTER, FUNCTIONS]
+      },
+      {
+        className: 'variable',
+        begin: /\{\{/, end: /}}/,
+        contains: [FILTER, FUNCTIONS]
+      }
+    ]
+  };
+};
+},{}],127:[function(require,module,exports){
+module.exports = function(hljs) {
+  var KEYWORDS = {
+    keyword:
+      'in if for while finally var new function|0 do return void else break catch ' +
+      'instanceof with throw case default try this switch continue typeof delete ' +
+      'let yield const class public private protected get set super ' +
+      'static implements enum export import declare type namespace abstract',
+    literal:
+      'true false null undefined NaN Infinity',
+    built_in:
+      'eval isFinite isNaN parseFloat parseInt decodeURI decodeURIComponent ' +
+      'encodeURI encodeURIComponent escape unescape Object Function Boolean Error ' +
+      'EvalError InternalError RangeError ReferenceError StopIteration SyntaxError ' +
+      'TypeError URIError Number Math Date String RegExp Array Float32Array ' +
+      'Float64Array Int16Array Int32Array Int8Array Uint16Array Uint32Array ' +
+      'Uint8Array Uint8ClampedArray ArrayBuffer DataView JSON Intl arguments require ' +
+      'module console window document any number boolean string void'
+  };
+
+  return {
+    aliases: ['ts'],
+    keywords: KEYWORDS,
     contains: [
       {
         className: 'pi',
-        begin: /^\s*('|")use strict('|")/,
+        begin: /^\s*['"]use strict['"]/,
         relevance: 0
       },
       hljs.APOS_STRING_MODE,
       hljs.QUOTE_STRING_MODE,
       hljs.C_LINE_COMMENT_MODE,
       hljs.C_BLOCK_COMMENT_MODE,
-      hljs.C_NUMBER_MODE,
+      {
+        className: 'number',
+        variants: [
+          { begin: '\\b(0[bB][01]+)' },
+          { begin: '\\b(0[oO][0-7]+)' },
+          { begin: hljs.C_NUMBER_RE }
+        ],
+        relevance: 0
+      },
       { // "value" container
         begin: '(' + hljs.RE_STARTERS_RE + '|\\b(case|return|throw)\\b)\\s*',
         keywords: 'return throw case',
         contains: [
           hljs.C_LINE_COMMENT_MODE,
           hljs.C_BLOCK_COMMENT_MODE,
-          hljs.REGEXP_MODE,
-          { // E4X
-            begin: /</, end: />;/,
-            relevance: 0,
-            subLanguage: 'xml'
-          }
+          hljs.REGEXP_MODE
         ],
         relevance: 0
       },
       {
         className: 'function',
-        beginKeywords: 'function', end: /\{/, excludeEnd: true,
+        begin: 'function', end: /[\{;]/, excludeEnd: true,
+        keywords: KEYWORDS,
         contains: [
+          'self',
           hljs.inherit(hljs.TITLE_MODE, {begin: /[A-Za-z$_][0-9A-Za-z$_]*/}),
           {
             className: 'params',
             begin: /\(/, end: /\)/,
+            excludeBegin: true,
+            excludeEnd: true,
+            keywords: KEYWORDS,
             contains: [
               hljs.C_LINE_COMMENT_MODE,
               hljs.C_BLOCK_COMMENT_MODE
@@ -7348,11 +12856,12 @@ module.exports = function(hljs) {
       },
       {
         className: 'module',
-        beginKeywords: 'module', end: /\{/, excludeEnd: true,
+        beginKeywords: 'module', end: /\{/, excludeEnd: true
       },
       {
         className: 'interface',
         beginKeywords: 'interface', end: /\{/, excludeEnd: true,
+        keywords: 'interface extends'
       },
       {
         begin: /\$[(.]/ // relevance booster for a pattern common to JS libs: `$(something)` and `$.something`
@@ -7363,7 +12872,7 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],88:[function(require,module,exports){
+},{}],128:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     keywords: {
@@ -7418,7 +12927,7 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],89:[function(require,module,exports){
+},{}],129:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     aliases: ['vb'],
@@ -7446,20 +12955,25 @@ module.exports = function(hljs) {
     illegal: '//|{|}|endif|gosub|variant|wend', /* reserved deprecated keywords */
     contains: [
       hljs.inherit(hljs.QUOTE_STRING_MODE, {contains: [{begin: '""'}]}),
-      {
-        className: 'comment',
-        begin: '\'', end: '$', returnBegin: true,
-        contains: [
-          {
-            className: 'xmlDocTag',
-            begin: '\'\'\'|<!--|-->'
-          },
-          {
-            className: 'xmlDocTag',
-            begin: '</?', end: '>'
-          }
+      hljs.COMMENT(
+        '\'',
+        '$',
+        {
+          returnBegin: true,
+          contains: [
+            {
+              className: 'xmlDocTag',
+              begin: '\'\'\'|<!--|-->',
+              contains: [hljs.PHRASAL_WORDS_MODE]
+            },
+            {
+              className: 'xmlDocTag',
+              begin: '</?', end: '>',
+              contains: [hljs.PHRASAL_WORDS_MODE]
+            }
           ]
-      },
+        }
+      ),
       hljs.C_NUMBER_MODE,
       {
         className: 'preprocessor',
@@ -7469,7 +12983,19 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],90:[function(require,module,exports){
+},{}],130:[function(require,module,exports){
+module.exports = function(hljs) {
+  return {
+    subLanguage: 'xml',
+    contains: [
+      {
+        begin: '<%', end: '%>',
+        subLanguage: 'vbscript'
+      }
+    ]
+  };
+};
+},{}],131:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     aliases: ['vbs'],
@@ -7497,17 +13023,81 @@ module.exports = function(hljs) {
     illegal: '//',
     contains: [
       hljs.inherit(hljs.QUOTE_STRING_MODE, {contains: [{begin: '""'}]}),
-      {
-        className: 'comment',
-        begin: /'/, end: /$/,
-        relevance: 0
-      },
+      hljs.COMMENT(
+        /'/,
+        /$/,
+        {
+          relevance: 0
+        }
+      ),
       hljs.C_NUMBER_MODE
     ]
   };
 };
-},{}],91:[function(require,module,exports){
+},{}],132:[function(require,module,exports){
 module.exports = function(hljs) {
+  return {
+    aliases: ['v'],
+    case_insensitive: true,
+    keywords: {
+      keyword:
+        'always and assign begin buf bufif0 bufif1 case casex casez cmos deassign ' +
+        'default defparam disable edge else end endcase endfunction endmodule ' +
+        'endprimitive endspecify endtable endtask event for force forever fork ' +
+        'function if ifnone initial inout input join macromodule module nand ' +
+        'negedge nmos nor not notif0 notif1 or output parameter pmos posedge ' +
+        'primitive pulldown pullup rcmos release repeat rnmos rpmos rtran ' +
+        'rtranif0 rtranif1 specify specparam table task timescale tran ' +
+        'tranif0 tranif1 wait while xnor xor',
+      typename:
+        'highz0 highz1 integer large medium pull0 pull1 real realtime reg ' +
+        'scalared signed small strong0 strong1 supply0 supply0 supply1 supply1 ' +
+        'time tri tri0 tri1 triand trior trireg vectored wand weak0 weak1 wire wor'
+    },
+    contains: [
+      hljs.C_BLOCK_COMMENT_MODE,
+      hljs.C_LINE_COMMENT_MODE,
+      hljs.QUOTE_STRING_MODE,
+      {
+        className: 'number',
+        begin: '\\b(\\d+\'(b|h|o|d|B|H|O|D))?[0-9xzXZ]+',
+        contains: [hljs.BACKSLASH_ESCAPE],
+        relevance: 0
+      },
+      /* ports in instances */
+      {
+        className: 'typename',
+        begin: '\\.\\w+',
+        relevance: 0
+      },
+      /* parameters to instances */
+      {
+        className: 'value',
+        begin: '#\\((?!parameter).+\\)'
+      },
+      /* operators */
+      {
+        className: 'keyword',
+        begin: '\\+|-|\\*|/|%|<|>|=|#|`|\\!|&|\\||@|:|\\^|~|\\{|\\}',
+        relevance: 0
+      }
+    ]
+  }; // return
+};
+},{}],133:[function(require,module,exports){
+module.exports = function(hljs) {
+  // Regular expression for VHDL numeric literals.
+
+  // Decimal literal:
+  var INTEGER_RE = '\\d(_|\\d)*';
+  var EXPONENT_RE = '[eE][-+]?' + INTEGER_RE;
+  var DECIMAL_LITERAL_RE = INTEGER_RE + '(\\.' + INTEGER_RE + ')?' + '(' + EXPONENT_RE + ')?';
+  // Based literal:
+  var BASED_INTEGER_RE = '\\w+';
+  var BASED_LITERAL_RE = INTEGER_RE + '#' + BASED_INTEGER_RE + '(\\.' + BASED_INTEGER_RE + ')?' + '#' + '(' + EXPONENT_RE + ')?';
+
+  var NUMBER_RE = '\\b(' + BASED_LITERAL_RE + '|' + DECIMAL_LITERAL_RE + ')';
+
   return {
     case_insensitive: true,
     keywords: {
@@ -7530,12 +13120,13 @@ module.exports = function(hljs) {
     illegal: '{',
     contains: [
       hljs.C_BLOCK_COMMENT_MODE,        // VHDL-2008 block commenting.
-      {
-        className: 'comment',
-        begin: '--', end: '$'
-      },
+      hljs.COMMENT('--', '$'),
       hljs.QUOTE_STRING_MODE,
-      hljs.C_NUMBER_MODE,
+      {
+        className: 'number',
+        begin: NUMBER_RE,
+        relevance: 0
+      },
       {
         className: 'literal',
         begin: '\'(U|X|0|1|Z|W|L|H|-)\'',
@@ -7547,9 +13138,9 @@ module.exports = function(hljs) {
         contains: [hljs.BACKSLASH_ESCAPE]
       }
     ]
-  }; // return
+  };
 };
-},{}],92:[function(require,module,exports){
+},{}],134:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     lexemes: /[!#@\w]+/,
@@ -7612,7 +13203,7 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],93:[function(require,module,exports){
+},{}],135:[function(require,module,exports){
 module.exports = function(hljs) {
   return {
     case_insensitive: true,
@@ -7682,66 +13273,55 @@ module.exports = function(hljs) {
         'float128l float128h __FLOAT_DAZ__ __FLOAT_ROUND__ __FLOAT__'
     },
     contains: [
-      {
-        className: 'comment',
-        begin: ';',
-        end: '$',
-        relevance: 0
-      },
-      // Float number and x87 BCD
-      {
-        className: 'number',
-        begin: '\\b(?:([0-9][0-9_]*)?\\.[0-9_]*(?:[eE][+-]?[0-9_]+)?|(0[Xx])?[0-9][0-9_]*\\.?[0-9_]*(?:[pP](?:[+-]?[0-9_]+)?)?)\\b',
-        relevance: 0
-      },
-      // Hex number in $
+      hljs.COMMENT(
+        ';',
+        '$',
+        {
+          relevance: 0
+        }
+      ),
       {
         className: 'number',
-        begin: '\\$[0-9][0-9A-Fa-f]*',
-        relevance: 0
-      },
-      // Number in H,X,D,T,Q,O,B,Y suffix
-      {
-        className: 'number',
-        begin: '\\b(?:[0-9A-Fa-f][0-9A-Fa-f_]*[HhXx]|[0-9][0-9_]*[DdTt]?|[0-7][0-7_]*[QqOo]|[0-1][0-1_]*[BbYy])\\b'
-      },
-      // Number in H,X,D,T,Q,O,B,Y prefix
-      {
-        className: 'number',
-        begin: '\\b(?:0[HhXx][0-9A-Fa-f_]+|0[DdTt][0-9_]+|0[QqOo][0-7_]+|0[BbYy][0-1_]+)\\b'
+        variants: [
+          // Float number and x87 BCD
+          {
+            begin: '\\b(?:([0-9][0-9_]*)?\\.[0-9_]*(?:[eE][+-]?[0-9_]+)?|' +
+                   '(0[Xx])?[0-9][0-9_]*\\.?[0-9_]*(?:[pP](?:[+-]?[0-9_]+)?)?)\\b',
+            relevance: 0
+          },
+
+          // Hex number in $
+          { begin: '\\$[0-9][0-9A-Fa-f]*', relevance: 0 },
+
+          // Number in H,D,T,Q,O,B,Y suffix
+          { begin: '\\b(?:[0-9A-Fa-f][0-9A-Fa-f_]*[Hh]|[0-9][0-9_]*[DdTt]?|[0-7][0-7_]*[QqOo]|[0-1][0-1_]*[BbYy])\\b' },
+
+          // Number in X,D,T,Q,O,B,Y prefix
+          { begin: '\\b(?:0[Xx][0-9A-Fa-f_]+|0[DdTt][0-9_]+|0[QqOo][0-7_]+|0[BbYy][0-1_]+)\\b'}
+        ]
       },
       // Double quote string
       hljs.QUOTE_STRING_MODE,
-      // Single-quoted string
       {
         className: 'string',
-        begin: '\'',
-        end: '[^\\\\]\'',
+        variants: [
+          // Single-quoted string
+          { begin: '\'', end: '[^\\\\]\'' },
+          // Backquoted string
+          { begin: '`', end: '[^\\\\]`' },
+          // Section name
+          { begin: '\\.[A-Za-z0-9]+' }
+        ],
         relevance: 0
       },
-      // Backquoted string
-      {
-        className: 'string',
-        begin: '`',
-        end: '[^\\\\]`',
-        relevance: 0
-      },
-      // Section name
-      {
-        className: 'string',
-        begin: '\\.[A-Za-z0-9]+',
-        relevance: 0
-      },
-      // Global label and local label
       {
         className: 'label',
-        begin: '^\\s*[A-Za-z._?][A-Za-z0-9_$#@~.?]*(:|\\s+label)',
-        relevance: 0
-      },
-      // Macro-local label
-      {
-        className: 'label',
-        begin: '^\\s*%%[A-Za-z0-9_$#@~.?]*:',
+        variants: [
+          // Global label and local label
+          { begin: '^\\s*[A-Za-z._?][A-Za-z0-9_$#@~.?]*(:|\\s+label)' },
+          // Macro-local label
+          { begin: '^\\s*%%[A-Za-z0-9_$#@~.?]*:' }
+        ],
         relevance: 0
       },
       // Macro parameter
@@ -7759,12 +13339,99 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],94:[function(require,module,exports){
+},{}],136:[function(require,module,exports){
+module.exports = function(hljs) {
+  var BUILTIN_MODULES =
+    'ObjectLoader Animate MovieCredits Slides Filters Shading Materials LensFlare Mapping VLCAudioVideo ' +
+    'StereoDecoder PointCloud NetworkAccess RemoteControl RegExp ChromaKey Snowfall NodeJS Speech Charts';
+
+  var XL_KEYWORDS = {
+    keyword: 'if then else do while until for loop import with is as where when by data constant',
+    literal: 'true false nil',
+    type: 'integer real text name boolean symbol infix prefix postfix block tree',
+    built_in: 'in mod rem and or xor not abs sign floor ceil sqrt sin cos tan asin acos atan exp expm1 log log2 log10 log1p pi at',
+    module: BUILTIN_MODULES,
+    id:
+      'text_length text_range text_find text_replace contains page slide basic_slide title_slide title subtitle ' +
+      'fade_in fade_out fade_at clear_color color line_color line_width texture_wrap texture_transform texture ' +
+      'scale_?x scale_?y scale_?z? translate_?x translate_?y translate_?z? rotate_?x rotate_?y rotate_?z? rectangle ' +
+      'circle ellipse sphere path line_to move_to quad_to curve_to theme background contents locally time mouse_?x ' +
+      'mouse_?y mouse_buttons'
+  };
+
+  var XL_CONSTANT = {
+    className: 'constant',
+    begin: '[A-Z][A-Z_0-9]+',
+    relevance: 0
+  };
+  var XL_VARIABLE = {
+    className: 'variable',
+    begin: '([A-Z][a-z_0-9]+)+',
+    relevance: 0
+  };
+  var XL_ID = {
+    className: 'id',
+    begin: '[a-z][a-z_0-9]+',
+    relevance: 0
+  };
+
+  var DOUBLE_QUOTE_TEXT = {
+    className: 'string',
+    begin: '"', end: '"', illegal: '\\n'
+  };
+  var SINGLE_QUOTE_TEXT = {
+    className: 'string',
+    begin: '\'', end: '\'', illegal: '\\n'
+  };
+  var LONG_TEXT = {
+    className: 'string',
+    begin: '<<', end: '>>'
+  };
+  var BASED_NUMBER = {
+    className: 'number',
+    begin: '[0-9]+#[0-9A-Z_]+(\\.[0-9-A-Z_]+)?#?([Ee][+-]?[0-9]+)?',
+    relevance: 10
+  };
+  var IMPORT = {
+    className: 'import',
+    beginKeywords: 'import', end: '$',
+    keywords: {
+      keyword: 'import',
+      module: BUILTIN_MODULES
+    },
+    relevance: 0,
+    contains: [DOUBLE_QUOTE_TEXT]
+  };
+  var FUNCTION_DEFINITION = {
+    className: 'function',
+    begin: '[a-z].*->'
+  };
+  return {
+    aliases: ['tao'],
+    lexemes: /[a-zA-Z][a-zA-Z0-9_?]*/,
+    keywords: XL_KEYWORDS,
+    contains: [
+    hljs.C_LINE_COMMENT_MODE,
+    hljs.C_BLOCK_COMMENT_MODE,
+    DOUBLE_QUOTE_TEXT,
+    SINGLE_QUOTE_TEXT,
+    LONG_TEXT,
+    FUNCTION_DEFINITION,
+    IMPORT,
+    XL_CONSTANT,
+    XL_VARIABLE,
+    XL_ID,
+    BASED_NUMBER,
+    hljs.NUMBER_MODE
+    ]
+  };
+};
+},{}],137:[function(require,module,exports){
 module.exports = function(hljs) {
   var XML_IDENT_RE = '[A-Za-z0-9\\._:-]+';
   var PHP = {
     begin: /<\?(php)?(?!\w)/, end: /\?>/,
-    subLanguage: 'php', subLanguageMode: 'continuous'
+    subLanguage: 'php'
   };
   var TAG_INTERNALS = {
     endsWithParent: true,
@@ -7783,6 +13450,7 @@ module.exports = function(hljs) {
         contains: [
           {
             className: 'value',
+            contains: [PHP],
             variants: [
               {begin: /"/, end: /"/},
               {begin: /'/, end: /'/},
@@ -7803,11 +13471,13 @@ module.exports = function(hljs) {
         relevance: 10,
         contains: [{begin: '\\[', end: '\\]'}]
       },
-      {
-        className: 'comment',
-        begin: '<!--', end: '-->',
-        relevance: 10
-      },
+      hljs.COMMENT(
+        '<!--',
+        '-->',
+        {
+          relevance: 10
+        }
+      ),
       {
         className: 'cdata',
         begin: '<\\!\\[CDATA\\[', end: '\\]\\]>',
@@ -7836,13 +13506,9 @@ module.exports = function(hljs) {
         keywords: {title: 'script'},
         contains: [TAG_INTERNALS],
         starts: {
-          end: '</script>', returnEnd: true,
-          subLanguage: 'javascript'
+          end: '\<\/script\>', returnEnd: true,
+          subLanguage: ['actionscript', 'javascript', 'handlebars']
         }
-      },
-      {
-        begin: '<%', end: '%>',
-        subLanguage: 'vbscript'
       },
       PHP,
       {
@@ -7863,31 +13529,211 @@ module.exports = function(hljs) {
     ]
   };
 };
-},{}],95:[function(require,module,exports){
+},{}],138:[function(require,module,exports){
+module.exports = function(hljs) {
+  var KEYWORDS = 'for let if while then else return where group by xquery encoding version' +
+    'module namespace boundary-space preserve strip default collation base-uri ordering' +
+    'copy-namespaces order declare import schema namespace function option in allowing empty' +
+    'at tumbling window sliding window start when only end when previous next stable ascending' +
+    'descending empty greatest least some every satisfies switch case typeswitch try catch and' +
+    'or to union intersect instance of treat as castable cast map array delete insert into' +
+    'replace value rename copy modify update';
+  var LITERAL = 'false true xs:string xs:integer element item xs:date xs:datetime xs:float xs:double xs:decimal QName xs:anyURI xs:long xs:int xs:short xs:byte attribute';
+  var VAR = {
+    className: 'variable',
+    begin: /\$[a-zA-Z0-9\-]+/,
+    relevance: 5
+  };
+
+  var NUMBER = {
+    className: 'number',
+    begin: '(\\b0[0-7_]+)|(\\b0x[0-9a-fA-F_]+)|(\\b[1-9][0-9_]*(\\.[0-9_]+)?)|[0_]\\b',
+    relevance: 0
+  };
+
+  var STRING = {
+    className: 'string',
+    variants: [
+      {begin: /"/, end: /"/, contains: [{begin: /""/, relevance: 0}]},
+      {begin: /'/, end: /'/, contains: [{begin: /''/, relevance: 0}]}
+    ]
+  };
+
+  var ANNOTATION = {
+    className: 'decorator',
+    begin: '%\\w+'
+  };
+
+  var COMMENT = {
+    className: 'comment',
+    begin: '\\(:', end: ':\\)',
+    relevance: 10,
+    contains: [
+      {
+        className: 'doc', begin: '@\\w+'
+      }
+    ]
+  };
+
+  var METHOD = {
+    begin: '{', end: '}'
+  };
+
+  var CONTAINS = [
+    VAR,
+    STRING,
+    NUMBER,
+    COMMENT,
+    ANNOTATION,
+    METHOD
+  ];
+  METHOD.contains = CONTAINS;
+
+
+  return {
+    aliases: ['xpath', 'xq'],
+    case_insensitive: false,
+    lexemes: /[a-zA-Z\$][a-zA-Z0-9_:\-]*/,
+    illegal: /(proc)|(abstract)|(extends)|(until)|(#)/,
+    keywords: {
+      keyword: KEYWORDS,
+      literal: LITERAL
+    },
+    contains: CONTAINS
+  };
+};
+},{}],139:[function(require,module,exports){
+module.exports = function(hljs) {
+  var STRING = {
+    className: 'string',
+    contains: [hljs.BACKSLASH_ESCAPE],
+    variants: [
+      {
+        begin: 'b"', end: '"'
+      },
+      {
+        begin: 'b\'', end: '\''
+      },
+      hljs.inherit(hljs.APOS_STRING_MODE, {illegal: null}),
+      hljs.inherit(hljs.QUOTE_STRING_MODE, {illegal: null})
+    ]
+  };
+  var NUMBER = {variants: [hljs.BINARY_NUMBER_MODE, hljs.C_NUMBER_MODE]};
+  return {
+    aliases: ['zep'],
+    case_insensitive: true,
+    keywords:
+    'and include_once list abstract global private echo interface as static endswitch ' +
+    'array null if endwhile or const for endforeach self var let while isset public ' +
+    'protected exit foreach throw elseif include __FILE__ empty require_once do xor ' +
+    'return parent clone use __CLASS__ __LINE__ else break print eval new ' +
+    'catch __METHOD__ case exception default die require __FUNCTION__ ' +
+    'enddeclare final try switch continue endfor endif declare unset true false ' +
+    'trait goto instanceof insteadof __DIR__ __NAMESPACE__ ' +
+    'yield finally int uint long ulong char uchar double float bool boolean string' +
+    'likely unlikely',
+    contains: [
+      hljs.C_LINE_COMMENT_MODE,
+      hljs.HASH_COMMENT_MODE,
+      hljs.COMMENT(
+        '/\\*',
+        '\\*/',
+        {
+          contains: [
+            {
+              className: 'doctag',
+              begin: '@[A-Za-z]+'
+            }
+          ]
+        }
+      ),
+      hljs.COMMENT(
+        '__halt_compiler.+?;',
+        false,
+        {
+          endsWithParent: true,
+          keywords: '__halt_compiler',
+          lexemes: hljs.UNDERSCORE_IDENT_RE
+        }
+      ),
+      {
+        className: 'string',
+        begin: '<<<[\'"]?\\w+[\'"]?$', end: '^\\w+;',
+        contains: [hljs.BACKSLASH_ESCAPE]
+      },
+      {
+        // swallow composed identifiers to avoid parsing them as keywords
+        begin: /(::|->)+[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*/
+      },
+      {
+        className: 'function',
+        beginKeywords: 'function', end: /[;{]/, excludeEnd: true,
+        illegal: '\\$|\\[|%',
+        contains: [
+          hljs.UNDERSCORE_TITLE_MODE,
+          {
+            className: 'params',
+            begin: '\\(', end: '\\)',
+            contains: [
+              'self',
+              hljs.C_BLOCK_COMMENT_MODE,
+              STRING,
+              NUMBER
+            ]
+          }
+        ]
+      },
+      {
+        className: 'class',
+        beginKeywords: 'class interface', end: '{', excludeEnd: true,
+        illegal: /[:\(\$"]/,
+        contains: [
+          {beginKeywords: 'extends implements'},
+          hljs.UNDERSCORE_TITLE_MODE
+        ]
+      },
+      {
+        beginKeywords: 'namespace', end: ';',
+        illegal: /[\.']/,
+        contains: [hljs.UNDERSCORE_TITLE_MODE]
+      },
+      {
+        beginKeywords: 'use', end: ';',
+        contains: [hljs.UNDERSCORE_TITLE_MODE]
+      },
+      {
+        begin: '=>' // No markup, just a relevance booster
+      },
+      STRING,
+      NUMBER
+    ]
+  };
+};
+},{}],140:[function(require,module,exports){
 /*!
- * jQuery JavaScript Library v2.1.1
+ * jQuery JavaScript Library v2.2.4
  * http://jquery.com/
  *
  * Includes Sizzle.js
  * http://sizzlejs.com/
  *
- * Copyright 2005, 2014 jQuery Foundation, Inc. and other contributors
+ * Copyright jQuery Foundation and other contributors
  * Released under the MIT license
  * http://jquery.org/license
  *
- * Date: 2014-05-01T17:11Z
+ * Date: 2016-05-20T17:23Z
  */
 
 (function( global, factory ) {
 
 	if ( typeof module === "object" && typeof module.exports === "object" ) {
-		// For CommonJS and CommonJS-like environments where a proper window is present,
-		// execute the factory and get jQuery
-		// For environments that do not inherently posses a window with a document
-		// (such as Node.js), expose a jQuery-making factory as module.exports
-		// This accentuates the need for the creation of a real window
+		// For CommonJS and CommonJS-like environments where a proper `window`
+		// is present, execute the factory and get jQuery.
+		// For environments that do not have a `window` with a `document`
+		// (such as Node.js), expose a factory as module.exports.
+		// This accentuates the need for the creation of a real `window`.
 		// e.g. var jQuery = require("jquery")(window);
-		// See ticket #14549 for more info
+		// See ticket #14549 for more info.
 		module.exports = global.document ?
 			factory( global, true ) :
 			function( w ) {
@@ -7903,13 +13749,14 @@ module.exports = function(hljs) {
 // Pass this if window is not defined yet
 }(typeof window !== "undefined" ? window : this, function( window, noGlobal ) {
 
-// Can't do this because several apps including ASP.NET trace
+// Support: Firefox 18+
+// Can't be in strict mode, several libs including ASP.NET trace
 // the stack via arguments.caller.callee and Firefox dies if
 // you try to trace through "use strict" call chains. (#13335)
-// Support: Firefox 18+
-//
-
+//"use strict";
 var arr = [];
+
+var document = window.document;
 
 var slice = arr.slice;
 
@@ -7930,13 +13777,11 @@ var support = {};
 
 
 var
-	// Use the correct document accordingly with window argument (sandbox)
-	document = window.document,
-
-	version = "2.1.1",
+	version = "2.2.4",
 
 	// Define a local copy of jQuery
 	jQuery = function( selector, context ) {
+
 		// The jQuery object is actually just the init constructor 'enhanced'
 		// Need init if jQuery is called (just allow error to be thrown if not included)
 		return new jQuery.fn.init( selector, context );
@@ -7956,6 +13801,7 @@ var
 	};
 
 jQuery.fn = jQuery.prototype = {
+
 	// The current version of jQuery being used
 	jquery: version,
 
@@ -7999,16 +13845,14 @@ jQuery.fn = jQuery.prototype = {
 	},
 
 	// Execute a callback for every element in the matched set.
-	// (You can seed the arguments with an array of args, but this is
-	// only used internally.)
-	each: function( callback, args ) {
-		return jQuery.each( this, callback, args );
+	each: function( callback ) {
+		return jQuery.each( this, callback );
 	},
 
 	map: function( callback ) {
-		return this.pushStack( jQuery.map(this, function( elem, i ) {
+		return this.pushStack( jQuery.map( this, function( elem, i ) {
 			return callback.call( elem, i, elem );
-		}));
+		} ) );
 	},
 
 	slice: function() {
@@ -8026,11 +13870,11 @@ jQuery.fn = jQuery.prototype = {
 	eq: function( i ) {
 		var len = this.length,
 			j = +i + ( i < 0 ? len : 0 );
-		return this.pushStack( j >= 0 && j < len ? [ this[j] ] : [] );
+		return this.pushStack( j >= 0 && j < len ? [ this[ j ] ] : [] );
 	},
 
 	end: function() {
-		return this.prevObject || this.constructor(null);
+		return this.prevObject || this.constructor();
 	},
 
 	// For internal use only.
@@ -8042,7 +13886,7 @@ jQuery.fn = jQuery.prototype = {
 
 jQuery.extend = jQuery.fn.extend = function() {
 	var options, name, src, copy, copyIsArray, clone,
-		target = arguments[0] || {},
+		target = arguments[ 0 ] || {},
 		i = 1,
 		length = arguments.length,
 		deep = false;
@@ -8051,25 +13895,27 @@ jQuery.extend = jQuery.fn.extend = function() {
 	if ( typeof target === "boolean" ) {
 		deep = target;
 
-		// skip the boolean and the target
+		// Skip the boolean and the target
 		target = arguments[ i ] || {};
 		i++;
 	}
 
 	// Handle case when target is a string or something (possible in deep copy)
-	if ( typeof target !== "object" && !jQuery.isFunction(target) ) {
+	if ( typeof target !== "object" && !jQuery.isFunction( target ) ) {
 		target = {};
 	}
 
-	// extend jQuery itself if only one argument is passed
+	// Extend jQuery itself if only one argument is passed
 	if ( i === length ) {
 		target = this;
 		i--;
 	}
 
 	for ( ; i < length; i++ ) {
+
 		// Only deal with non-null/undefined values
-		if ( (options = arguments[ i ]) != null ) {
+		if ( ( options = arguments[ i ] ) != null ) {
+
 			// Extend the base object
 			for ( name in options ) {
 				src = target[ name ];
@@ -8081,13 +13927,15 @@ jQuery.extend = jQuery.fn.extend = function() {
 				}
 
 				// Recurse if we're merging plain objects or arrays
-				if ( deep && copy && ( jQuery.isPlainObject(copy) || (copyIsArray = jQuery.isArray(copy)) ) ) {
+				if ( deep && copy && ( jQuery.isPlainObject( copy ) ||
+					( copyIsArray = jQuery.isArray( copy ) ) ) ) {
+
 					if ( copyIsArray ) {
 						copyIsArray = false;
-						clone = src && jQuery.isArray(src) ? src : [];
+						clone = src && jQuery.isArray( src ) ? src : [];
 
 					} else {
-						clone = src && jQuery.isPlainObject(src) ? src : {};
+						clone = src && jQuery.isPlainObject( src ) ? src : {};
 					}
 
 					// Never move original objects, clone them
@@ -8105,7 +13953,8 @@ jQuery.extend = jQuery.fn.extend = function() {
 	return target;
 };
 
-jQuery.extend({
+jQuery.extend( {
+
 	// Unique for each copy of jQuery on the page
 	expando: "jQuery" + ( version + Math.random() ).replace( /\D/g, "" ),
 
@@ -8118,11 +13967,8 @@ jQuery.extend({
 
 	noop: function() {},
 
-	// See test/unit/core.js for details concerning isFunction.
-	// Since version 1.3, DOM methods and functions like alert
-	// aren't supported. They return false on IE (#2968).
 	isFunction: function( obj ) {
-		return jQuery.type(obj) === "function";
+		return jQuery.type( obj ) === "function";
 	},
 
 	isArray: Array.isArray,
@@ -8132,13 +13978,18 @@ jQuery.extend({
 	},
 
 	isNumeric: function( obj ) {
+
 		// parseFloat NaNs numeric-cast false positives (null|true|false|"")
 		// ...but misinterprets leading-number strings, particularly hex literals ("0x...")
 		// subtraction forces infinities to NaN
-		return !jQuery.isArray( obj ) && obj - parseFloat( obj ) >= 0;
+		// adding 1 corrects loss of precision from parseFloat (#15100)
+		var realStringObj = obj && obj.toString();
+		return !jQuery.isArray( obj ) && ( realStringObj - parseFloat( realStringObj ) + 1 ) >= 0;
 	},
 
 	isPlainObject: function( obj ) {
+		var key;
+
 		// Not plain objects:
 		// - Any object or value whose internal [[Class]] property is not "[object Object]"
 		// - DOM nodes
@@ -8147,14 +13998,18 @@ jQuery.extend({
 			return false;
 		}
 
+		// Not own constructor property must be Object
 		if ( obj.constructor &&
-				!hasOwn.call( obj.constructor.prototype, "isPrototypeOf" ) ) {
+				!hasOwn.call( obj, "constructor" ) &&
+				!hasOwn.call( obj.constructor.prototype || {}, "isPrototypeOf" ) ) {
 			return false;
 		}
 
-		// If the function hasn't returned already, we're confident that
-		// |obj| is a plain object, created by {} or constructed with new Object
-		return true;
+		// Own properties are enumerated firstly, so to speed up,
+		// if last one is own, then all properties are own
+		for ( key in obj ) {}
+
+		return key === undefined || hasOwn.call( obj, key );
 	},
 
 	isEmptyObject: function( obj ) {
@@ -8169,9 +14024,10 @@ jQuery.extend({
 		if ( obj == null ) {
 			return obj + "";
 		}
-		// Support: Android < 4.0, iOS < 6 (functionish RegExp)
+
+		// Support: Android<4.0, iOS<6 (functionish RegExp)
 		return typeof obj === "object" || typeof obj === "function" ?
-			class2type[ toString.call(obj) ] || "object" :
+			class2type[ toString.call( obj ) ] || "object" :
 			typeof obj;
 	},
 
@@ -8183,22 +14039,26 @@ jQuery.extend({
 		code = jQuery.trim( code );
 
 		if ( code ) {
+
 			// If the code includes a valid, prologue position
 			// strict mode pragma, execute code by injecting a
 			// script tag into the document.
-			if ( code.indexOf("use strict") === 1 ) {
-				script = document.createElement("script");
+			if ( code.indexOf( "use strict" ) === 1 ) {
+				script = document.createElement( "script" );
 				script.text = code;
 				document.head.appendChild( script ).parentNode.removeChild( script );
 			} else {
-			// Otherwise, avoid the DOM node creation, insertion
-			// and removal by using an indirect global eval
+
+				// Otherwise, avoid the DOM node creation, insertion
+				// and removal by using an indirect global eval
+
 				indirect( code );
 			}
 		}
 	},
 
 	// Convert dashed to camelCase; used by the css and data modules
+	// Support: IE9-11+
 	// Microsoft forgot to hump their vendor prefix (#9572)
 	camelCase: function( string ) {
 		return string.replace( rmsPrefix, "ms-" ).replace( rdashAlpha, fcamelCase );
@@ -8208,49 +14068,20 @@ jQuery.extend({
 		return elem.nodeName && elem.nodeName.toLowerCase() === name.toLowerCase();
 	},
 
-	// args is for internal usage only
-	each: function( obj, callback, args ) {
-		var value,
-			i = 0,
-			length = obj.length,
-			isArray = isArraylike( obj );
+	each: function( obj, callback ) {
+		var length, i = 0;
 
-		if ( args ) {
-			if ( isArray ) {
-				for ( ; i < length; i++ ) {
-					value = callback.apply( obj[ i ], args );
-
-					if ( value === false ) {
-						break;
-					}
-				}
-			} else {
-				for ( i in obj ) {
-					value = callback.apply( obj[ i ], args );
-
-					if ( value === false ) {
-						break;
-					}
+		if ( isArrayLike( obj ) ) {
+			length = obj.length;
+			for ( ; i < length; i++ ) {
+				if ( callback.call( obj[ i ], i, obj[ i ] ) === false ) {
+					break;
 				}
 			}
-
-		// A special, fast, case for the most common use of each
 		} else {
-			if ( isArray ) {
-				for ( ; i < length; i++ ) {
-					value = callback.call( obj[ i ], i, obj[ i ] );
-
-					if ( value === false ) {
-						break;
-					}
-				}
-			} else {
-				for ( i in obj ) {
-					value = callback.call( obj[ i ], i, obj[ i ] );
-
-					if ( value === false ) {
-						break;
-					}
+			for ( i in obj ) {
+				if ( callback.call( obj[ i ], i, obj[ i ] ) === false ) {
+					break;
 				}
 			}
 		}
@@ -8270,7 +14101,7 @@ jQuery.extend({
 		var ret = results || [];
 
 		if ( arr != null ) {
-			if ( isArraylike( Object(arr) ) ) {
+			if ( isArrayLike( Object( arr ) ) ) {
 				jQuery.merge( ret,
 					typeof arr === "string" ?
 					[ arr ] : arr
@@ -8322,14 +14153,13 @@ jQuery.extend({
 
 	// arg is for internal usage only
 	map: function( elems, callback, arg ) {
-		var value,
+		var length, value,
 			i = 0,
-			length = elems.length,
-			isArray = isArraylike( elems ),
 			ret = [];
 
 		// Go through the array, translating each of the items to their new values
-		if ( isArray ) {
+		if ( isArrayLike( elems ) ) {
+			length = elems.length;
 			for ( ; i < length; i++ ) {
 				value = callback( elems[ i ], i, arg );
 
@@ -8390,23 +14220,35 @@ jQuery.extend({
 	// jQuery.support is not used in Core but other projects attach their
 	// properties to it so it needs to exist.
 	support: support
-});
+} );
+
+// JSHint would error on this code due to the Symbol not being defined in ES5.
+// Defining this global in .jshintrc would create a danger of using the global
+// unguarded in another place, it seems safer to just disable JSHint for these
+// three lines.
+/* jshint ignore: start */
+if ( typeof Symbol === "function" ) {
+	jQuery.fn[ Symbol.iterator ] = arr[ Symbol.iterator ];
+}
+/* jshint ignore: end */
 
 // Populate the class2type map
-jQuery.each("Boolean Number String Function Array Date RegExp Object Error".split(" "), function(i, name) {
+jQuery.each( "Boolean Number String Function Array Date RegExp Object Error Symbol".split( " " ),
+function( i, name ) {
 	class2type[ "[object " + name + "]" ] = name.toLowerCase();
-});
+} );
 
-function isArraylike( obj ) {
-	var length = obj.length,
+function isArrayLike( obj ) {
+
+	// Support: iOS 8.2 (not reproducible in simulator)
+	// `in` check used to prevent JIT error (gh-2145)
+	// hasOwn isn't used here due to false negatives
+	// regarding Nodelist length in IE
+	var length = !!obj && "length" in obj && obj.length,
 		type = jQuery.type( obj );
 
 	if ( type === "function" || jQuery.isWindow( obj ) ) {
 		return false;
-	}
-
-	if ( obj.nodeType === 1 && length ) {
-		return true;
 	}
 
 	return type === "array" || length === 0 ||
@@ -8414,14 +14256,14 @@ function isArraylike( obj ) {
 }
 var Sizzle =
 /*!
- * Sizzle CSS Selector Engine v1.10.19
+ * Sizzle CSS Selector Engine v2.2.1
  * http://sizzlejs.com/
  *
- * Copyright 2013 jQuery Foundation, Inc. and other contributors
+ * Copyright jQuery Foundation and other contributors
  * Released under the MIT license
  * http://jquery.org/license
  *
- * Date: 2014-04-18
+ * Date: 2015-10-17
  */
 (function( window ) {
 
@@ -8448,7 +14290,7 @@ var i,
 	contains,
 
 	// Instance-specific data
-	expando = "sizzle" + -(new Date()),
+	expando = "sizzle" + 1 * new Date(),
 	preferredDoc = window.document,
 	dirruns = 0,
 	done = 0,
@@ -8463,7 +14305,6 @@ var i,
 	},
 
 	// General-purpose constants
-	strundefined = typeof undefined,
 	MAX_NEGATIVE = 1 << 31,
 
 	// Instance methods
@@ -8473,12 +14314,13 @@ var i,
 	push_native = arr.push,
 	push = arr.push,
 	slice = arr.slice,
-	// Use a stripped-down indexOf if we can't use a native one
-	indexOf = arr.indexOf || function( elem ) {
+	// Use a stripped-down indexOf as it's faster than native
+	// http://jsperf.com/thor-indexof-vs-for/5
+	indexOf = function( list, elem ) {
 		var i = 0,
-			len = this.length;
+			len = list.length;
 		for ( ; i < len; i++ ) {
-			if ( this[i] === elem ) {
+			if ( list[i] === elem ) {
 				return i;
 			}
 		}
@@ -8489,25 +14331,21 @@ var i,
 
 	// Regular expressions
 
-	// Whitespace characters http://www.w3.org/TR/css3-selectors/#whitespace
+	// http://www.w3.org/TR/css3-selectors/#whitespace
 	whitespace = "[\\x20\\t\\r\\n\\f]",
-	// http://www.w3.org/TR/css3-syntax/#characters
-	characterEncoding = "(?:\\\\.|[\\w-]|[^\\x00-\\xa0])+",
 
-	// Loosely modeled on CSS identifier characters
-	// An unquoted value should be a CSS identifier http://www.w3.org/TR/css3-selectors/#attribute-selectors
-	// Proper syntax: http://www.w3.org/TR/CSS21/syndata.html#value-def-identifier
-	identifier = characterEncoding.replace( "w", "w#" ),
+	// http://www.w3.org/TR/CSS21/syndata.html#value-def-identifier
+	identifier = "(?:\\\\.|[\\w-]|[^\\x00-\\xa0])+",
 
 	// Attribute selectors: http://www.w3.org/TR/selectors/#attribute-selectors
-	attributes = "\\[" + whitespace + "*(" + characterEncoding + ")(?:" + whitespace +
+	attributes = "\\[" + whitespace + "*(" + identifier + ")(?:" + whitespace +
 		// Operator (capture 2)
 		"*([*^$|!~]?=)" + whitespace +
 		// "Attribute values must be CSS identifiers [capture 5] or strings [capture 3 or capture 4]"
 		"*(?:'((?:\\\\.|[^\\\\'])*)'|\"((?:\\\\.|[^\\\\\"])*)\"|(" + identifier + "))|)" + whitespace +
 		"*\\]",
 
-	pseudos = ":(" + characterEncoding + ")(?:\\((" +
+	pseudos = ":(" + identifier + ")(?:\\((" +
 		// To reduce the number of selectors needing tokenize in the preFilter, prefer arguments:
 		// 1. quoted (capture 3; capture 4 or capture 5)
 		"('((?:\\\\.|[^\\\\'])*)'|\"((?:\\\\.|[^\\\\\"])*)\")|" +
@@ -8518,6 +14356,7 @@ var i,
 		")\\)|)",
 
 	// Leading and non-escaped trailing whitespace, capturing some non-whitespace characters preceding the latter
+	rwhitespace = new RegExp( whitespace + "+", "g" ),
 	rtrim = new RegExp( "^" + whitespace + "+|((?:^|[^\\\\])(?:\\\\.)*)" + whitespace + "+$", "g" ),
 
 	rcomma = new RegExp( "^" + whitespace + "*," + whitespace + "*" ),
@@ -8529,9 +14368,9 @@ var i,
 	ridentifier = new RegExp( "^" + identifier + "$" ),
 
 	matchExpr = {
-		"ID": new RegExp( "^#(" + characterEncoding + ")" ),
-		"CLASS": new RegExp( "^\\.(" + characterEncoding + ")" ),
-		"TAG": new RegExp( "^(" + characterEncoding.replace( "w", "w*" ) + ")" ),
+		"ID": new RegExp( "^#(" + identifier + ")" ),
+		"CLASS": new RegExp( "^\\.(" + identifier + ")" ),
+		"TAG": new RegExp( "^(" + identifier + "|[*])" ),
 		"ATTR": new RegExp( "^" + attributes ),
 		"PSEUDO": new RegExp( "^" + pseudos ),
 		"CHILD": new RegExp( "^:(only|first|last|nth|nth-last)-(child|of-type)(?:\\(" + whitespace +
@@ -8569,6 +14408,14 @@ var i,
 				String.fromCharCode( high + 0x10000 ) :
 				// Supplemental Plane codepoint (surrogate pair)
 				String.fromCharCode( high >> 10 | 0xD800, high & 0x3FF | 0xDC00 );
+	},
+
+	// Used for iframes
+	// See setDocument()
+	// Removing the function wrapper causes a "Permission Denied"
+	// error in IE
+	unloadHandler = function() {
+		setDocument();
 	};
 
 // Optimize for push.apply( _, NodeList )
@@ -8601,104 +14448,129 @@ try {
 }
 
 function Sizzle( selector, context, results, seed ) {
-	var match, elem, m, nodeType,
-		// QSA vars
-		i, groups, old, nid, newContext, newSelector;
+	var m, i, elem, nid, nidselect, match, groups, newSelector,
+		newContext = context && context.ownerDocument,
 
-	if ( ( context ? context.ownerDocument || context : preferredDoc ) !== document ) {
-		setDocument( context );
-	}
+		// nodeType defaults to 9, since context defaults to document
+		nodeType = context ? context.nodeType : 9;
 
-	context = context || document;
 	results = results || [];
 
-	if ( !selector || typeof selector !== "string" ) {
+	// Return early from calls with invalid selector or context
+	if ( typeof selector !== "string" || !selector ||
+		nodeType !== 1 && nodeType !== 9 && nodeType !== 11 ) {
+
 		return results;
 	}
 
-	if ( (nodeType = context.nodeType) !== 1 && nodeType !== 9 ) {
-		return [];
-	}
+	// Try to shortcut find operations (as opposed to filters) in HTML documents
+	if ( !seed ) {
 
-	if ( documentIsHTML && !seed ) {
+		if ( ( context ? context.ownerDocument || context : preferredDoc ) !== document ) {
+			setDocument( context );
+		}
+		context = context || document;
 
-		// Shortcuts
-		if ( (match = rquickExpr.exec( selector )) ) {
-			// Speed-up: Sizzle("#ID")
-			if ( (m = match[1]) ) {
-				if ( nodeType === 9 ) {
-					elem = context.getElementById( m );
-					// Check parentNode to catch when Blackberry 4.6 returns
-					// nodes that are no longer in the document (jQuery #6963)
-					if ( elem && elem.parentNode ) {
-						// Handle the case where IE, Opera, and Webkit return items
-						// by name instead of ID
-						if ( elem.id === m ) {
+		if ( documentIsHTML ) {
+
+			// If the selector is sufficiently simple, try using a "get*By*" DOM method
+			// (excepting DocumentFragment context, where the methods don't exist)
+			if ( nodeType !== 11 && (match = rquickExpr.exec( selector )) ) {
+
+				// ID selector
+				if ( (m = match[1]) ) {
+
+					// Document context
+					if ( nodeType === 9 ) {
+						if ( (elem = context.getElementById( m )) ) {
+
+							// Support: IE, Opera, Webkit
+							// TODO: identify versions
+							// getElementById can match elements by name instead of ID
+							if ( elem.id === m ) {
+								results.push( elem );
+								return results;
+							}
+						} else {
+							return results;
+						}
+
+					// Element context
+					} else {
+
+						// Support: IE, Opera, Webkit
+						// TODO: identify versions
+						// getElementById can match elements by name instead of ID
+						if ( newContext && (elem = newContext.getElementById( m )) &&
+							contains( context, elem ) &&
+							elem.id === m ) {
+
 							results.push( elem );
 							return results;
 						}
-					} else {
-						return results;
 					}
-				} else {
-					// Context is not a document
-					if ( context.ownerDocument && (elem = context.ownerDocument.getElementById( m )) &&
-						contains( context, elem ) && elem.id === m ) {
-						results.push( elem );
-						return results;
-					}
-				}
 
-			// Speed-up: Sizzle("TAG")
-			} else if ( match[2] ) {
-				push.apply( results, context.getElementsByTagName( selector ) );
-				return results;
-
-			// Speed-up: Sizzle(".CLASS")
-			} else if ( (m = match[3]) && support.getElementsByClassName && context.getElementsByClassName ) {
-				push.apply( results, context.getElementsByClassName( m ) );
-				return results;
-			}
-		}
-
-		// QSA path
-		if ( support.qsa && (!rbuggyQSA || !rbuggyQSA.test( selector )) ) {
-			nid = old = expando;
-			newContext = context;
-			newSelector = nodeType === 9 && selector;
-
-			// qSA works strangely on Element-rooted queries
-			// We can work around this by specifying an extra ID on the root
-			// and working up from there (Thanks to Andrew Dupont for the technique)
-			// IE 8 doesn't work on object elements
-			if ( nodeType === 1 && context.nodeName.toLowerCase() !== "object" ) {
-				groups = tokenize( selector );
-
-				if ( (old = context.getAttribute("id")) ) {
-					nid = old.replace( rescape, "\\$&" );
-				} else {
-					context.setAttribute( "id", nid );
-				}
-				nid = "[id='" + nid + "'] ";
-
-				i = groups.length;
-				while ( i-- ) {
-					groups[i] = nid + toSelector( groups[i] );
-				}
-				newContext = rsibling.test( selector ) && testContext( context.parentNode ) || context;
-				newSelector = groups.join(",");
-			}
-
-			if ( newSelector ) {
-				try {
-					push.apply( results,
-						newContext.querySelectorAll( newSelector )
-					);
+				// Type selector
+				} else if ( match[2] ) {
+					push.apply( results, context.getElementsByTagName( selector ) );
 					return results;
-				} catch(qsaError) {
-				} finally {
-					if ( !old ) {
-						context.removeAttribute("id");
+
+				// Class selector
+				} else if ( (m = match[3]) && support.getElementsByClassName &&
+					context.getElementsByClassName ) {
+
+					push.apply( results, context.getElementsByClassName( m ) );
+					return results;
+				}
+			}
+
+			// Take advantage of querySelectorAll
+			if ( support.qsa &&
+				!compilerCache[ selector + " " ] &&
+				(!rbuggyQSA || !rbuggyQSA.test( selector )) ) {
+
+				if ( nodeType !== 1 ) {
+					newContext = context;
+					newSelector = selector;
+
+				// qSA looks outside Element context, which is not what we want
+				// Thanks to Andrew Dupont for this workaround technique
+				// Support: IE <=8
+				// Exclude object elements
+				} else if ( context.nodeName.toLowerCase() !== "object" ) {
+
+					// Capture the context ID, setting it first if necessary
+					if ( (nid = context.getAttribute( "id" )) ) {
+						nid = nid.replace( rescape, "\\$&" );
+					} else {
+						context.setAttribute( "id", (nid = expando) );
+					}
+
+					// Prefix every selector in the list
+					groups = tokenize( selector );
+					i = groups.length;
+					nidselect = ridentifier.test( nid ) ? "#" + nid : "[id='" + nid + "']";
+					while ( i-- ) {
+						groups[i] = nidselect + " " + toSelector( groups[i] );
+					}
+					newSelector = groups.join( "," );
+
+					// Expand context for sibling selectors
+					newContext = rsibling.test( selector ) && testContext( context.parentNode ) ||
+						context;
+				}
+
+				if ( newSelector ) {
+					try {
+						push.apply( results,
+							newContext.querySelectorAll( newSelector )
+						);
+						return results;
+					} catch ( qsaError ) {
+					} finally {
+						if ( nid === expando ) {
+							context.removeAttribute( "id" );
+						}
 					}
 				}
 			}
@@ -8711,7 +14583,7 @@ function Sizzle( selector, context, results, seed ) {
 
 /**
  * Create key-value caches of limited size
- * @returns {Function(string, Object)} Returns the Object data after storing it on itself with
+ * @returns {function(string, object)} Returns the Object data after storing it on itself with
  *	property name the (space-suffixed) string and (if the cache is larger than Expr.cacheLength)
  *	deleting the oldest entry
  */
@@ -8766,7 +14638,7 @@ function assert( fn ) {
  */
 function addHandle( attrs, handler ) {
 	var arr = attrs.split("|"),
-		i = attrs.length;
+		i = arr.length;
 
 	while ( i-- ) {
 		Expr.attrHandle[ arr[i] ] = handler;
@@ -8852,7 +14724,7 @@ function createPositionalPseudo( fn ) {
  * @returns {Element|Object|Boolean} The input node if acceptable, otherwise a falsy value
  */
 function testContext( context ) {
-	return context && typeof context.getElementsByTagName !== strundefined && context;
+	return context && typeof context.getElementsByTagName !== "undefined" && context;
 }
 
 // Expose support vars for convenience
@@ -8876,36 +14748,29 @@ isXML = Sizzle.isXML = function( elem ) {
  * @returns {Object} Returns the current document
  */
 setDocument = Sizzle.setDocument = function( node ) {
-	var hasCompare,
-		doc = node ? node.ownerDocument || node : preferredDoc,
-		parent = doc.defaultView;
+	var hasCompare, parent,
+		doc = node ? node.ownerDocument || node : preferredDoc;
 
-	// If no document and documentElement is available, return
+	// Return early if doc is invalid or already selected
 	if ( doc === document || doc.nodeType !== 9 || !doc.documentElement ) {
 		return document;
 	}
 
-	// Set our document
+	// Update global variables
 	document = doc;
-	docElem = doc.documentElement;
+	docElem = document.documentElement;
+	documentIsHTML = !isXML( document );
 
-	// Support tests
-	documentIsHTML = !isXML( doc );
-
-	// Support: IE>8
-	// If iframe document is assigned to "document" variable and if iframe has been reloaded,
-	// IE will throw "permission denied" error when accessing "document" variable, see jQuery #13936
-	// IE6-8 do not support the defaultView property so parent will be undefined
-	if ( parent && parent !== parent.top ) {
-		// IE11 does not have attachEvent, so all must suffer
+	// Support: IE 9-11, Edge
+	// Accessing iframe documents after unload throws "permission denied" errors (jQuery #13936)
+	if ( (parent = document.defaultView) && parent.top !== parent ) {
+		// Support: IE 11
 		if ( parent.addEventListener ) {
-			parent.addEventListener( "unload", function() {
-				setDocument();
-			}, false );
+			parent.addEventListener( "unload", unloadHandler, false );
+
+		// Support: IE 9 - 10 only
 		} else if ( parent.attachEvent ) {
-			parent.attachEvent( "onunload", function() {
-				setDocument();
-			});
+			parent.attachEvent( "onunload", unloadHandler );
 		}
 	}
 
@@ -8913,7 +14778,8 @@ setDocument = Sizzle.setDocument = function( node ) {
 	---------------------------------------------------------------------- */
 
 	// Support: IE<8
-	// Verify that getAttribute really returns attributes and not properties (excepting IE8 booleans)
+	// Verify that getAttribute really returns attributes and not properties
+	// (excepting IE8 booleans)
 	support.attributes = assert(function( div ) {
 		div.className = "i";
 		return !div.getAttribute("className");
@@ -8924,21 +14790,12 @@ setDocument = Sizzle.setDocument = function( node ) {
 
 	// Check if getElementsByTagName("*") returns only elements
 	support.getElementsByTagName = assert(function( div ) {
-		div.appendChild( doc.createComment("") );
+		div.appendChild( document.createComment("") );
 		return !div.getElementsByTagName("*").length;
 	});
 
-	// Check if getElementsByClassName can be trusted
-	support.getElementsByClassName = rnative.test( doc.getElementsByClassName ) && assert(function( div ) {
-		div.innerHTML = "<div class='a'></div><div class='a i'></div>";
-
-		// Support: Safari<4
-		// Catch class over-caching
-		div.firstChild.className = "i";
-		// Support: Opera<10
-		// Catch gEBCN failure to find non-leading classes
-		return div.getElementsByClassName("i").length === 2;
-	});
+	// Support: IE<9
+	support.getElementsByClassName = rnative.test( document.getElementsByClassName );
 
 	// Support: IE<10
 	// Check if getElementById returns elements by name
@@ -8946,17 +14803,15 @@ setDocument = Sizzle.setDocument = function( node ) {
 	// so use a roundabout getElementsByName test
 	support.getById = assert(function( div ) {
 		docElem.appendChild( div ).id = expando;
-		return !doc.getElementsByName || !doc.getElementsByName( expando ).length;
+		return !document.getElementsByName || !document.getElementsByName( expando ).length;
 	});
 
 	// ID find and filter
 	if ( support.getById ) {
 		Expr.find["ID"] = function( id, context ) {
-			if ( typeof context.getElementById !== strundefined && documentIsHTML ) {
+			if ( typeof context.getElementById !== "undefined" && documentIsHTML ) {
 				var m = context.getElementById( id );
-				// Check parentNode to catch when Blackberry 4.6 returns
-				// nodes that are no longer in the document #6963
-				return m && m.parentNode ? [ m ] : [];
+				return m ? [ m ] : [];
 			}
 		};
 		Expr.filter["ID"] = function( id ) {
@@ -8973,7 +14828,8 @@ setDocument = Sizzle.setDocument = function( node ) {
 		Expr.filter["ID"] =  function( id ) {
 			var attrId = id.replace( runescape, funescape );
 			return function( elem ) {
-				var node = typeof elem.getAttributeNode !== strundefined && elem.getAttributeNode("id");
+				var node = typeof elem.getAttributeNode !== "undefined" &&
+					elem.getAttributeNode("id");
 				return node && node.value === attrId;
 			};
 		};
@@ -8982,14 +14838,20 @@ setDocument = Sizzle.setDocument = function( node ) {
 	// Tag
 	Expr.find["TAG"] = support.getElementsByTagName ?
 		function( tag, context ) {
-			if ( typeof context.getElementsByTagName !== strundefined ) {
+			if ( typeof context.getElementsByTagName !== "undefined" ) {
 				return context.getElementsByTagName( tag );
+
+			// DocumentFragment nodes don't have gEBTN
+			} else if ( support.qsa ) {
+				return context.querySelectorAll( tag );
 			}
 		} :
+
 		function( tag, context ) {
 			var elem,
 				tmp = [],
 				i = 0,
+				// By happy coincidence, a (broken) gEBTN appears on DocumentFragment nodes too
 				results = context.getElementsByTagName( tag );
 
 			// Filter out possible comments
@@ -9007,7 +14869,7 @@ setDocument = Sizzle.setDocument = function( node ) {
 
 	// Class
 	Expr.find["CLASS"] = support.getElementsByClassName && function( className, context ) {
-		if ( typeof context.getElementsByClassName !== strundefined && documentIsHTML ) {
+		if ( typeof context.getElementsByClassName !== "undefined" && documentIsHTML ) {
 			return context.getElementsByClassName( className );
 		}
 	};
@@ -9027,7 +14889,7 @@ setDocument = Sizzle.setDocument = function( node ) {
 	// See http://bugs.jquery.com/ticket/13378
 	rbuggyQSA = [];
 
-	if ( (support.qsa = rnative.test( doc.querySelectorAll )) ) {
+	if ( (support.qsa = rnative.test( document.querySelectorAll )) ) {
 		// Build QSA regex
 		// Regex strategy adopted from Diego Perini
 		assert(function( div ) {
@@ -9036,13 +14898,15 @@ setDocument = Sizzle.setDocument = function( node ) {
 			// setting a boolean content attribute,
 			// since its presence should be enough
 			// http://bugs.jquery.com/ticket/12359
-			div.innerHTML = "<select msallowclip=''><option selected=''></option></select>";
+			docElem.appendChild( div ).innerHTML = "<a id='" + expando + "'></a>" +
+				"<select id='" + expando + "-\r\\' msallowcapture=''>" +
+				"<option selected=''></option></select>";
 
 			// Support: IE8, Opera 11-12.16
 			// Nothing should be selected when empty strings follow ^= or $= or *=
 			// The test attribute must be unknown in Opera but "safe" for WinRT
 			// http://msdn.microsoft.com/en-us/library/ie/hh465388.aspx#attribute_section
-			if ( div.querySelectorAll("[msallowclip^='']").length ) {
+			if ( div.querySelectorAll("[msallowcapture^='']").length ) {
 				rbuggyQSA.push( "[*^$]=" + whitespace + "*(?:''|\"\")" );
 			}
 
@@ -9052,18 +14916,30 @@ setDocument = Sizzle.setDocument = function( node ) {
 				rbuggyQSA.push( "\\[" + whitespace + "*(?:value|" + booleans + ")" );
 			}
 
+			// Support: Chrome<29, Android<4.4, Safari<7.0+, iOS<7.0+, PhantomJS<1.9.8+
+			if ( !div.querySelectorAll( "[id~=" + expando + "-]" ).length ) {
+				rbuggyQSA.push("~=");
+			}
+
 			// Webkit/Opera - :checked should return selected option elements
 			// http://www.w3.org/TR/2011/REC-css3-selectors-20110929/#checked
 			// IE8 throws error here and will not see later tests
 			if ( !div.querySelectorAll(":checked").length ) {
 				rbuggyQSA.push(":checked");
 			}
+
+			// Support: Safari 8+, iOS 8+
+			// https://bugs.webkit.org/show_bug.cgi?id=136851
+			// In-page `selector#id sibing-combinator selector` fails
+			if ( !div.querySelectorAll( "a#" + expando + "+*" ).length ) {
+				rbuggyQSA.push(".#.+[+~]");
+			}
 		});
 
 		assert(function( div ) {
 			// Support: Windows 8 Native Apps
 			// The type and name attributes are restricted during .innerHTML assignment
-			var input = doc.createElement("input");
+			var input = document.createElement("input");
 			input.setAttribute( "type", "hidden" );
 			div.appendChild( input ).setAttribute( "name", "D" );
 
@@ -9111,7 +14987,7 @@ setDocument = Sizzle.setDocument = function( node ) {
 	hasCompare = rnative.test( docElem.compareDocumentPosition );
 
 	// Element contains another
-	// Purposefully does not implement inclusive descendent
+	// Purposefully self-exclusive
 	// As in, an element does not contain itself
 	contains = hasCompare || rnative.test( docElem.contains ) ?
 		function( a, b ) {
@@ -9165,16 +15041,16 @@ setDocument = Sizzle.setDocument = function( node ) {
 			(!support.sortDetached && b.compareDocumentPosition( a ) === compare) ) {
 
 			// Choose the first element that is related to our preferred document
-			if ( a === doc || a.ownerDocument === preferredDoc && contains(preferredDoc, a) ) {
+			if ( a === document || a.ownerDocument === preferredDoc && contains(preferredDoc, a) ) {
 				return -1;
 			}
-			if ( b === doc || b.ownerDocument === preferredDoc && contains(preferredDoc, b) ) {
+			if ( b === document || b.ownerDocument === preferredDoc && contains(preferredDoc, b) ) {
 				return 1;
 			}
 
 			// Maintain original order
 			return sortInput ?
-				( indexOf.call( sortInput, a ) - indexOf.call( sortInput, b ) ) :
+				( indexOf( sortInput, a ) - indexOf( sortInput, b ) ) :
 				0;
 		}
 
@@ -9196,12 +15072,12 @@ setDocument = Sizzle.setDocument = function( node ) {
 
 		// Parentless nodes are either documents or disconnected
 		if ( !aup || !bup ) {
-			return a === doc ? -1 :
-				b === doc ? 1 :
+			return a === document ? -1 :
+				b === document ? 1 :
 				aup ? -1 :
 				bup ? 1 :
 				sortInput ?
-				( indexOf.call( sortInput, a ) - indexOf.call( sortInput, b ) ) :
+				( indexOf( sortInput, a ) - indexOf( sortInput, b ) ) :
 				0;
 
 		// If the nodes are siblings, we can do a quick check
@@ -9234,7 +15110,7 @@ setDocument = Sizzle.setDocument = function( node ) {
 			0;
 	};
 
-	return doc;
+	return document;
 };
 
 Sizzle.matches = function( expr, elements ) {
@@ -9251,6 +15127,7 @@ Sizzle.matchesSelector = function( elem, expr ) {
 	expr = expr.replace( rattributeQuotes, "='$1']" );
 
 	if ( support.matchesSelector && documentIsHTML &&
+		!compilerCache[ expr + " " ] &&
 		( !rbuggyMatches || !rbuggyMatches.test( expr ) ) &&
 		( !rbuggyQSA     || !rbuggyQSA.test( expr ) ) ) {
 
@@ -9264,7 +15141,7 @@ Sizzle.matchesSelector = function( elem, expr ) {
 					elem.document && elem.document.nodeType !== 11 ) {
 				return ret;
 			}
-		} catch(e) {}
+		} catch (e) {}
 	}
 
 	return Sizzle( expr, document, null, [ elem ] ).length > 0;
@@ -9483,7 +15360,7 @@ Expr = Sizzle.selectors = {
 			return pattern ||
 				(pattern = new RegExp( "(^|" + whitespace + ")" + className + "(" + whitespace + "|$)" )) &&
 				classCache( className, function( elem ) {
-					return pattern.test( typeof elem.className === "string" && elem.className || typeof elem.getAttribute !== strundefined && elem.getAttribute("class") || "" );
+					return pattern.test( typeof elem.className === "string" && elem.className || typeof elem.getAttribute !== "undefined" && elem.getAttribute("class") || "" );
 				});
 		},
 
@@ -9505,7 +15382,7 @@ Expr = Sizzle.selectors = {
 					operator === "^=" ? check && result.indexOf( check ) === 0 :
 					operator === "*=" ? check && result.indexOf( check ) > -1 :
 					operator === "$=" ? check && result.slice( -check.length ) === check :
-					operator === "~=" ? ( " " + result + " " ).indexOf( check ) > -1 :
+					operator === "~=" ? ( " " + result.replace( rwhitespace, " " ) + " " ).indexOf( check ) > -1 :
 					operator === "|=" ? result === check || result.slice( 0, check.length + 1 ) === check + "-" :
 					false;
 			};
@@ -9524,11 +15401,12 @@ Expr = Sizzle.selectors = {
 				} :
 
 				function( elem, context, xml ) {
-					var cache, outerCache, node, diff, nodeIndex, start,
+					var cache, uniqueCache, outerCache, node, nodeIndex, start,
 						dir = simple !== forward ? "nextSibling" : "previousSibling",
 						parent = elem.parentNode,
 						name = ofType && elem.nodeName.toLowerCase(),
-						useCache = !xml && !ofType;
+						useCache = !xml && !ofType,
+						diff = false;
 
 					if ( parent ) {
 
@@ -9537,7 +15415,10 @@ Expr = Sizzle.selectors = {
 							while ( dir ) {
 								node = elem;
 								while ( (node = node[ dir ]) ) {
-									if ( ofType ? node.nodeName.toLowerCase() === name : node.nodeType === 1 ) {
+									if ( ofType ?
+										node.nodeName.toLowerCase() === name :
+										node.nodeType === 1 ) {
+
 										return false;
 									}
 								}
@@ -9551,11 +15432,21 @@ Expr = Sizzle.selectors = {
 
 						// non-xml :nth-child(...) stores cache data on `parent`
 						if ( forward && useCache ) {
+
 							// Seek `elem` from a previously-cached index
-							outerCache = parent[ expando ] || (parent[ expando ] = {});
-							cache = outerCache[ type ] || [];
-							nodeIndex = cache[0] === dirruns && cache[1];
-							diff = cache[0] === dirruns && cache[2];
+
+							// ...in a gzip-friendly way
+							node = parent;
+							outerCache = node[ expando ] || (node[ expando ] = {});
+
+							// Support: IE <9 only
+							// Defend against cloned attroperties (jQuery gh-1709)
+							uniqueCache = outerCache[ node.uniqueID ] ||
+								(outerCache[ node.uniqueID ] = {});
+
+							cache = uniqueCache[ type ] || [];
+							nodeIndex = cache[ 0 ] === dirruns && cache[ 1 ];
+							diff = nodeIndex && cache[ 2 ];
 							node = nodeIndex && parent.childNodes[ nodeIndex ];
 
 							while ( (node = ++nodeIndex && node && node[ dir ] ||
@@ -9565,29 +15456,55 @@ Expr = Sizzle.selectors = {
 
 								// When found, cache indexes on `parent` and break
 								if ( node.nodeType === 1 && ++diff && node === elem ) {
-									outerCache[ type ] = [ dirruns, nodeIndex, diff ];
+									uniqueCache[ type ] = [ dirruns, nodeIndex, diff ];
 									break;
 								}
 							}
 
-						// Use previously-cached element index if available
-						} else if ( useCache && (cache = (elem[ expando ] || (elem[ expando ] = {}))[ type ]) && cache[0] === dirruns ) {
-							diff = cache[1];
-
-						// xml :nth-child(...) or :nth-last-child(...) or :nth(-last)?-of-type(...)
 						} else {
-							// Use the same loop as above to seek `elem` from the start
-							while ( (node = ++nodeIndex && node && node[ dir ] ||
-								(diff = nodeIndex = 0) || start.pop()) ) {
+							// Use previously-cached element index if available
+							if ( useCache ) {
+								// ...in a gzip-friendly way
+								node = elem;
+								outerCache = node[ expando ] || (node[ expando ] = {});
 
-								if ( ( ofType ? node.nodeName.toLowerCase() === name : node.nodeType === 1 ) && ++diff ) {
-									// Cache the index of each encountered element
-									if ( useCache ) {
-										(node[ expando ] || (node[ expando ] = {}))[ type ] = [ dirruns, diff ];
-									}
+								// Support: IE <9 only
+								// Defend against cloned attroperties (jQuery gh-1709)
+								uniqueCache = outerCache[ node.uniqueID ] ||
+									(outerCache[ node.uniqueID ] = {});
 
-									if ( node === elem ) {
-										break;
+								cache = uniqueCache[ type ] || [];
+								nodeIndex = cache[ 0 ] === dirruns && cache[ 1 ];
+								diff = nodeIndex;
+							}
+
+							// xml :nth-child(...)
+							// or :nth-last-child(...) or :nth(-last)?-of-type(...)
+							if ( diff === false ) {
+								// Use the same loop as above to seek `elem` from the start
+								while ( (node = ++nodeIndex && node && node[ dir ] ||
+									(diff = nodeIndex = 0) || start.pop()) ) {
+
+									if ( ( ofType ?
+										node.nodeName.toLowerCase() === name :
+										node.nodeType === 1 ) &&
+										++diff ) {
+
+										// Cache the index of each encountered element
+										if ( useCache ) {
+											outerCache = node[ expando ] || (node[ expando ] = {});
+
+											// Support: IE <9 only
+											// Defend against cloned attroperties (jQuery gh-1709)
+											uniqueCache = outerCache[ node.uniqueID ] ||
+												(outerCache[ node.uniqueID ] = {});
+
+											uniqueCache[ type ] = [ dirruns, diff ];
+										}
+
+										if ( node === elem ) {
+											break;
+										}
 									}
 								}
 							}
@@ -9625,7 +15542,7 @@ Expr = Sizzle.selectors = {
 							matched = fn( seed, argument ),
 							i = matched.length;
 						while ( i-- ) {
-							idx = indexOf.call( seed, matched[i] );
+							idx = indexOf( seed, matched[i] );
 							seed[ idx ] = !( matches[ idx ] = matched[i] );
 						}
 					}) :
@@ -9664,6 +15581,8 @@ Expr = Sizzle.selectors = {
 				function( elem, context, xml ) {
 					input[0] = elem;
 					matcher( input, null, xml, results );
+					// Don't keep the element (issue #299)
+					input[0] = null;
 					return !results.pop();
 				};
 		}),
@@ -9675,6 +15594,7 @@ Expr = Sizzle.selectors = {
 		}),
 
 		"contains": markFunction(function( text ) {
+			text = text.replace( runescape, funescape );
 			return function( elem ) {
 				return ( elem.textContent || elem.innerText || getText( elem ) ).indexOf( text ) > -1;
 			};
@@ -9946,10 +15866,10 @@ function addCombinator( matcher, combinator, base ) {
 
 		// Check against all ancestor/preceding elements
 		function( elem, context, xml ) {
-			var oldCache, outerCache,
+			var oldCache, uniqueCache, outerCache,
 				newCache = [ dirruns, doneName ];
 
-			// We can't set arbitrary data on XML nodes, so they don't benefit from dir caching
+			// We can't set arbitrary data on XML nodes, so they don't benefit from combinator caching
 			if ( xml ) {
 				while ( (elem = elem[ dir ]) ) {
 					if ( elem.nodeType === 1 || checkNonElements ) {
@@ -9962,14 +15882,19 @@ function addCombinator( matcher, combinator, base ) {
 				while ( (elem = elem[ dir ]) ) {
 					if ( elem.nodeType === 1 || checkNonElements ) {
 						outerCache = elem[ expando ] || (elem[ expando ] = {});
-						if ( (oldCache = outerCache[ dir ]) &&
+
+						// Support: IE <9 only
+						// Defend against cloned attroperties (jQuery gh-1709)
+						uniqueCache = outerCache[ elem.uniqueID ] || (outerCache[ elem.uniqueID ] = {});
+
+						if ( (oldCache = uniqueCache[ dir ]) &&
 							oldCache[ 0 ] === dirruns && oldCache[ 1 ] === doneName ) {
 
 							// Assign to newCache so results back-propagate to previous elements
 							return (newCache[ 2 ] = oldCache[ 2 ]);
 						} else {
 							// Reuse newcache so results back-propagate to previous elements
-							outerCache[ dir ] = newCache;
+							uniqueCache[ dir ] = newCache;
 
 							// A match means we're done; a fail means we have to keep checking
 							if ( (newCache[ 2 ] = matcher( elem, context, xml )) ) {
@@ -10096,7 +16021,7 @@ function setMatcher( preFilter, selector, matcher, postFilter, postFinder, postS
 				i = matcherOut.length;
 				while ( i-- ) {
 					if ( (elem = matcherOut[i]) &&
-						(temp = postFinder ? indexOf.call( seed, elem ) : preMap[i]) > -1 ) {
+						(temp = postFinder ? indexOf( seed, elem ) : preMap[i]) > -1 ) {
 
 						seed[temp] = !(results[temp] = elem);
 					}
@@ -10131,13 +16056,16 @@ function matcherFromTokens( tokens ) {
 			return elem === checkContext;
 		}, implicitRelative, true ),
 		matchAnyContext = addCombinator( function( elem ) {
-			return indexOf.call( checkContext, elem ) > -1;
+			return indexOf( checkContext, elem ) > -1;
 		}, implicitRelative, true ),
 		matchers = [ function( elem, context, xml ) {
-			return ( !leadingRelative && ( xml || context !== outermostContext ) ) || (
+			var ret = ( !leadingRelative && ( xml || context !== outermostContext ) ) || (
 				(checkContext = context).nodeType ?
 					matchContext( elem, context, xml ) :
 					matchAnyContext( elem, context, xml ) );
+			// Avoid hanging onto element (issue #299)
+			checkContext = null;
+			return ret;
 		} ];
 
 	for ( ; i < len; i++ ) {
@@ -10191,18 +16119,21 @@ function matcherFromGroupMatchers( elementMatchers, setMatchers ) {
 				len = elems.length;
 
 			if ( outermost ) {
-				outermostContext = context !== document && context;
+				outermostContext = context === document || context || outermost;
 			}
 
 			// Add elements passing elementMatchers directly to results
-			// Keep `i` a string if there are no elements so `matchedCount` will be "00" below
 			// Support: IE<9, Safari
 			// Tolerate NodeList properties (IE: "length"; Safari: <number>) matching elements by id
 			for ( ; i !== len && (elem = elems[i]) != null; i++ ) {
 				if ( byElement && elem ) {
 					j = 0;
+					if ( !context && elem.ownerDocument !== document ) {
+						setDocument( elem );
+						xml = !documentIsHTML;
+					}
 					while ( (matcher = elementMatchers[j++]) ) {
-						if ( matcher( elem, context, xml ) ) {
+						if ( matcher( elem, context || document, xml) ) {
 							results.push( elem );
 							break;
 						}
@@ -10226,8 +16157,17 @@ function matcherFromGroupMatchers( elementMatchers, setMatchers ) {
 				}
 			}
 
-			// Apply set filters to unmatched elements
+			// `i` is now the count of elements visited above, and adding it to `matchedCount`
+			// makes the latter nonnegative.
 			matchedCount += i;
+
+			// Apply set filters to unmatched elements
+			// NOTE: This can be skipped if there are no unmatched elements (i.e., `matchedCount`
+			// equals `i`), unless we didn't visit _any_ elements in the above loop because we have
+			// no element matchers and no seed.
+			// Incrementing an initially-string "0" `i` allows `i` to remain a string only in that
+			// case, which will result in a "00" `matchedCount` that differs from `i` but is also
+			// numerically zero.
 			if ( bySet && i !== matchedCount ) {
 				j = 0;
 				while ( (matcher = setMatchers[j++]) ) {
@@ -10319,10 +16259,11 @@ select = Sizzle.select = function( selector, context, results, seed ) {
 
 	results = results || [];
 
-	// Try to minimize operations if there is no seed and only one group
+	// Try to minimize operations if there is only one selector in the list and no seed
+	// (the latter of which guarantees us context)
 	if ( match.length === 1 ) {
 
-		// Take a shortcut and set the context if the root selector is an ID
+		// Reduce context if the leading compound selector is an ID
 		tokens = match[0] = match[0].slice( 0 );
 		if ( tokens.length > 2 && (token = tokens[0]).type === "ID" &&
 				support.getById && context.nodeType === 9 && documentIsHTML &&
@@ -10377,7 +16318,7 @@ select = Sizzle.select = function( selector, context, results, seed ) {
 		context,
 		!documentIsHTML,
 		results,
-		rsibling.test( selector ) && testContext( context.parentNode ) || context
+		!context || rsibling.test( selector ) && testContext( context.parentNode ) || context
 	);
 	return results;
 };
@@ -10387,7 +16328,7 @@ select = Sizzle.select = function( selector, context, results, seed ) {
 // Sort stability
 support.sortStable = expando.split("").sort( sortOrder ).join("") === expando;
 
-// Support: Chrome<14
+// Support: Chrome 14-35+
 // Always assume duplicates if they aren't passed to the comparison function
 support.detectDuplicates = !!hasDuplicate;
 
@@ -10453,17 +16394,46 @@ return Sizzle;
 
 jQuery.find = Sizzle;
 jQuery.expr = Sizzle.selectors;
-jQuery.expr[":"] = jQuery.expr.pseudos;
-jQuery.unique = Sizzle.uniqueSort;
+jQuery.expr[ ":" ] = jQuery.expr.pseudos;
+jQuery.uniqueSort = jQuery.unique = Sizzle.uniqueSort;
 jQuery.text = Sizzle.getText;
 jQuery.isXMLDoc = Sizzle.isXML;
 jQuery.contains = Sizzle.contains;
 
 
 
+var dir = function( elem, dir, until ) {
+	var matched = [],
+		truncate = until !== undefined;
+
+	while ( ( elem = elem[ dir ] ) && elem.nodeType !== 9 ) {
+		if ( elem.nodeType === 1 ) {
+			if ( truncate && jQuery( elem ).is( until ) ) {
+				break;
+			}
+			matched.push( elem );
+		}
+	}
+	return matched;
+};
+
+
+var siblings = function( n, elem ) {
+	var matched = [];
+
+	for ( ; n; n = n.nextSibling ) {
+		if ( n.nodeType === 1 && n !== elem ) {
+			matched.push( n );
+		}
+	}
+
+	return matched;
+};
+
+
 var rneedsContext = jQuery.expr.match.needsContext;
 
-var rsingleTag = (/^<(\w+)\s*\/?>(?:<\/\1>|)$/);
+var rsingleTag = ( /^<([\w-]+)\s*\/?>(?:<\/\1>|)$/ );
 
 
 
@@ -10475,14 +16445,14 @@ function winnow( elements, qualifier, not ) {
 		return jQuery.grep( elements, function( elem, i ) {
 			/* jshint -W018 */
 			return !!qualifier.call( elem, i, elem ) !== not;
-		});
+		} );
 
 	}
 
 	if ( qualifier.nodeType ) {
 		return jQuery.grep( elements, function( elem ) {
 			return ( elem === qualifier ) !== not;
-		});
+		} );
 
 	}
 
@@ -10495,8 +16465,8 @@ function winnow( elements, qualifier, not ) {
 	}
 
 	return jQuery.grep( elements, function( elem ) {
-		return ( indexOf.call( qualifier, elem ) >= 0 ) !== not;
-	});
+		return ( indexOf.call( qualifier, elem ) > -1 ) !== not;
+	} );
 }
 
 jQuery.filter = function( expr, elems, not ) {
@@ -10510,10 +16480,10 @@ jQuery.filter = function( expr, elems, not ) {
 		jQuery.find.matchesSelector( elem, expr ) ? [ elem ] : [] :
 		jQuery.find.matches( expr, jQuery.grep( elems, function( elem ) {
 			return elem.nodeType === 1;
-		}));
+		} ) );
 };
 
-jQuery.fn.extend({
+jQuery.fn.extend( {
 	find: function( selector ) {
 		var i,
 			len = this.length,
@@ -10521,13 +16491,13 @@ jQuery.fn.extend({
 			self = this;
 
 		if ( typeof selector !== "string" ) {
-			return this.pushStack( jQuery( selector ).filter(function() {
+			return this.pushStack( jQuery( selector ).filter( function() {
 				for ( i = 0; i < len; i++ ) {
 					if ( jQuery.contains( self[ i ], this ) ) {
 						return true;
 					}
 				}
-			}) );
+			} ) );
 		}
 
 		for ( i = 0; i < len; i++ ) {
@@ -10540,10 +16510,10 @@ jQuery.fn.extend({
 		return ret;
 	},
 	filter: function( selector ) {
-		return this.pushStack( winnow(this, selector || [], false) );
+		return this.pushStack( winnow( this, selector || [], false ) );
 	},
 	not: function( selector ) {
-		return this.pushStack( winnow(this, selector || [], true) );
+		return this.pushStack( winnow( this, selector || [], true ) );
 	},
 	is: function( selector ) {
 		return !!winnow(
@@ -10557,7 +16527,7 @@ jQuery.fn.extend({
 			false
 		).length;
 	}
-});
+} );
 
 
 // Initialize a jQuery object
@@ -10571,7 +16541,7 @@ var rootjQuery,
 	// Strict HTML recognition (#11290: must start with <)
 	rquickExpr = /^(?:\s*(<[\w\W]+>)[^>]*|#([\w-]*))$/,
 
-	init = jQuery.fn.init = function( selector, context ) {
+	init = jQuery.fn.init = function( selector, context, root ) {
 		var match, elem;
 
 		// HANDLE: $(""), $(null), $(undefined), $(false)
@@ -10579,9 +16549,16 @@ var rootjQuery,
 			return this;
 		}
 
+		// Method init() accepts an alternate rootjQuery
+		// so migrate can support jQuery.sub (gh-2101)
+		root = root || rootjQuery;
+
 		// Handle HTML strings
 		if ( typeof selector === "string" ) {
-			if ( selector[0] === "<" && selector[ selector.length - 1 ] === ">" && selector.length >= 3 ) {
+			if ( selector[ 0 ] === "<" &&
+				selector[ selector.length - 1 ] === ">" &&
+				selector.length >= 3 ) {
+
 				// Assume that strings that start and end with <> are HTML and skip the regex check
 				match = [ null, selector, null ];
 
@@ -10590,23 +16567,24 @@ var rootjQuery,
 			}
 
 			// Match html or make sure no context is specified for #id
-			if ( match && (match[1] || !context) ) {
+			if ( match && ( match[ 1 ] || !context ) ) {
 
 				// HANDLE: $(html) -> $(array)
-				if ( match[1] ) {
-					context = context instanceof jQuery ? context[0] : context;
+				if ( match[ 1 ] ) {
+					context = context instanceof jQuery ? context[ 0 ] : context;
 
-					// scripts is true for back-compat
+					// Option to run scripts is true for back-compat
 					// Intentionally let the error be thrown if parseHTML is not present
 					jQuery.merge( this, jQuery.parseHTML(
-						match[1],
+						match[ 1 ],
 						context && context.nodeType ? context.ownerDocument || context : document,
 						true
 					) );
 
 					// HANDLE: $(html, props)
-					if ( rsingleTag.test( match[1] ) && jQuery.isPlainObject( context ) ) {
+					if ( rsingleTag.test( match[ 1 ] ) && jQuery.isPlainObject( context ) ) {
 						for ( match in context ) {
+
 							// Properties of context are called as methods if possible
 							if ( jQuery.isFunction( this[ match ] ) ) {
 								this[ match ]( context[ match ] );
@@ -10622,14 +16600,15 @@ var rootjQuery,
 
 				// HANDLE: $(#id)
 				} else {
-					elem = document.getElementById( match[2] );
+					elem = document.getElementById( match[ 2 ] );
 
-					// Check parentNode to catch when Blackberry 4.6 returns
-					// nodes that are no longer in the document #6963
+					// Support: Blackberry 4.6
+					// gEBID returns nodes no longer in the document (#6963)
 					if ( elem && elem.parentNode ) {
+
 						// Inject the element directly into the jQuery object
 						this.length = 1;
-						this[0] = elem;
+						this[ 0 ] = elem;
 					}
 
 					this.context = document;
@@ -10639,7 +16618,7 @@ var rootjQuery,
 
 			// HANDLE: $(expr, $(...))
 			} else if ( !context || context.jquery ) {
-				return ( context || rootjQuery ).find( selector );
+				return ( context || root ).find( selector );
 
 			// HANDLE: $(expr, context)
 			// (which is just equivalent to: $(context).find(expr)
@@ -10649,15 +16628,16 @@ var rootjQuery,
 
 		// HANDLE: $(DOMElement)
 		} else if ( selector.nodeType ) {
-			this.context = this[0] = selector;
+			this.context = this[ 0 ] = selector;
 			this.length = 1;
 			return this;
 
 		// HANDLE: $(function)
 		// Shortcut for document ready
 		} else if ( jQuery.isFunction( selector ) ) {
-			return typeof rootjQuery.ready !== "undefined" ?
-				rootjQuery.ready( selector ) :
+			return root.ready !== undefined ?
+				root.ready( selector ) :
+
 				// Execute immediately if ready is not present
 				selector( jQuery );
 		}
@@ -10678,7 +16658,8 @@ rootjQuery = jQuery( document );
 
 
 var rparentsprev = /^(?:parents|prev(?:Until|All))/,
-	// methods guaranteed to produce a unique set when starting from a unique set
+
+	// Methods guaranteed to produce a unique set when starting from a unique set
 	guaranteedUnique = {
 		children: true,
 		contents: true,
@@ -10686,48 +16667,19 @@ var rparentsprev = /^(?:parents|prev(?:Until|All))/,
 		prev: true
 	};
 
-jQuery.extend({
-	dir: function( elem, dir, until ) {
-		var matched = [],
-			truncate = until !== undefined;
-
-		while ( (elem = elem[ dir ]) && elem.nodeType !== 9 ) {
-			if ( elem.nodeType === 1 ) {
-				if ( truncate && jQuery( elem ).is( until ) ) {
-					break;
-				}
-				matched.push( elem );
-			}
-		}
-		return matched;
-	},
-
-	sibling: function( n, elem ) {
-		var matched = [];
-
-		for ( ; n; n = n.nextSibling ) {
-			if ( n.nodeType === 1 && n !== elem ) {
-				matched.push( n );
-			}
-		}
-
-		return matched;
-	}
-});
-
-jQuery.fn.extend({
+jQuery.fn.extend( {
 	has: function( target ) {
 		var targets = jQuery( target, this ),
 			l = targets.length;
 
-		return this.filter(function() {
+		return this.filter( function() {
 			var i = 0;
 			for ( ; i < l; i++ ) {
-				if ( jQuery.contains( this, targets[i] ) ) {
+				if ( jQuery.contains( this, targets[ i ] ) ) {
 					return true;
 				}
 			}
-		});
+		} );
 	},
 
 	closest: function( selectors, context ) {
@@ -10740,14 +16692,15 @@ jQuery.fn.extend({
 				0;
 
 		for ( ; i < l; i++ ) {
-			for ( cur = this[i]; cur && cur !== context; cur = cur.parentNode ) {
+			for ( cur = this[ i ]; cur && cur !== context; cur = cur.parentNode ) {
+
 				// Always skip document fragments
-				if ( cur.nodeType < 11 && (pos ?
-					pos.index(cur) > -1 :
+				if ( cur.nodeType < 11 && ( pos ?
+					pos.index( cur ) > -1 :
 
 					// Don't pass non-elements to Sizzle
 					cur.nodeType === 1 &&
-						jQuery.find.matchesSelector(cur, selectors)) ) {
+						jQuery.find.matchesSelector( cur, selectors ) ) ) {
 
 					matched.push( cur );
 					break;
@@ -10755,11 +16708,10 @@ jQuery.fn.extend({
 			}
 		}
 
-		return this.pushStack( matched.length > 1 ? jQuery.unique( matched ) : matched );
+		return this.pushStack( matched.length > 1 ? jQuery.uniqueSort( matched ) : matched );
 	},
 
-	// Determine the position of an element within
-	// the matched set of elements
+	// Determine the position of an element within the set
 	index: function( elem ) {
 
 		// No argument, return index in parent
@@ -10767,7 +16719,7 @@ jQuery.fn.extend({
 			return ( this[ 0 ] && this[ 0 ].parentNode ) ? this.first().prevAll().length : -1;
 		}
 
-		// index in selector
+		// Index in selector
 		if ( typeof elem === "string" ) {
 			return indexOf.call( jQuery( elem ), this[ 0 ] );
 		}
@@ -10782,7 +16734,7 @@ jQuery.fn.extend({
 
 	add: function( selector, context ) {
 		return this.pushStack(
-			jQuery.unique(
+			jQuery.uniqueSort(
 				jQuery.merge( this.get(), jQuery( selector, context ) )
 			)
 		);
@@ -10790,26 +16742,26 @@ jQuery.fn.extend({
 
 	addBack: function( selector ) {
 		return this.add( selector == null ?
-			this.prevObject : this.prevObject.filter(selector)
+			this.prevObject : this.prevObject.filter( selector )
 		);
 	}
-});
+} );
 
 function sibling( cur, dir ) {
-	while ( (cur = cur[dir]) && cur.nodeType !== 1 ) {}
+	while ( ( cur = cur[ dir ] ) && cur.nodeType !== 1 ) {}
 	return cur;
 }
 
-jQuery.each({
+jQuery.each( {
 	parent: function( elem ) {
 		var parent = elem.parentNode;
 		return parent && parent.nodeType !== 11 ? parent : null;
 	},
 	parents: function( elem ) {
-		return jQuery.dir( elem, "parentNode" );
+		return dir( elem, "parentNode" );
 	},
 	parentsUntil: function( elem, i, until ) {
-		return jQuery.dir( elem, "parentNode", until );
+		return dir( elem, "parentNode", until );
 	},
 	next: function( elem ) {
 		return sibling( elem, "nextSibling" );
@@ -10818,22 +16770,22 @@ jQuery.each({
 		return sibling( elem, "previousSibling" );
 	},
 	nextAll: function( elem ) {
-		return jQuery.dir( elem, "nextSibling" );
+		return dir( elem, "nextSibling" );
 	},
 	prevAll: function( elem ) {
-		return jQuery.dir( elem, "previousSibling" );
+		return dir( elem, "previousSibling" );
 	},
 	nextUntil: function( elem, i, until ) {
-		return jQuery.dir( elem, "nextSibling", until );
+		return dir( elem, "nextSibling", until );
 	},
 	prevUntil: function( elem, i, until ) {
-		return jQuery.dir( elem, "previousSibling", until );
+		return dir( elem, "previousSibling", until );
 	},
 	siblings: function( elem ) {
-		return jQuery.sibling( ( elem.parentNode || {} ).firstChild, elem );
+		return siblings( ( elem.parentNode || {} ).firstChild, elem );
 	},
 	children: function( elem ) {
-		return jQuery.sibling( elem.firstChild );
+		return siblings( elem.firstChild );
 	},
 	contents: function( elem ) {
 		return elem.contentDocument || jQuery.merge( [], elem.childNodes );
@@ -10851,9 +16803,10 @@ jQuery.each({
 		}
 
 		if ( this.length > 1 ) {
+
 			// Remove duplicates
 			if ( !guaranteedUnique[ name ] ) {
-				jQuery.unique( matched );
+				jQuery.uniqueSort( matched );
 			}
 
 			// Reverse order for parents* and prev-derivatives
@@ -10864,20 +16817,17 @@ jQuery.each({
 
 		return this.pushStack( matched );
 	};
-});
-var rnotwhite = (/\S+/g);
+} );
+var rnotwhite = ( /\S+/g );
 
 
 
-// String to Object options format cache
-var optionsCache = {};
-
-// Convert String-formatted options into Object-formatted ones and store in cache
+// Convert String-formatted options into Object-formatted ones
 function createOptions( options ) {
-	var object = optionsCache[ options ] = {};
+	var object = {};
 	jQuery.each( options.match( rnotwhite ) || [], function( _, flag ) {
 		object[ flag ] = true;
-	});
+	} );
 	return object;
 }
 
@@ -10908,156 +16858,186 @@ jQuery.Callbacks = function( options ) {
 	// Convert options from String-formatted to Object-formatted if needed
 	// (we check in cache first)
 	options = typeof options === "string" ?
-		( optionsCache[ options ] || createOptions( options ) ) :
+		createOptions( options ) :
 		jQuery.extend( {}, options );
 
-	var // Last fire value (for non-forgettable lists)
+	var // Flag to know if list is currently firing
+		firing,
+
+		// Last fire value for non-forgettable lists
 		memory,
+
 		// Flag to know if list was already fired
 		fired,
-		// Flag to know if list is currently firing
-		firing,
-		// First callback to fire (used internally by add and fireWith)
-		firingStart,
-		// End of the loop when firing
-		firingLength,
-		// Index of currently firing callback (modified by remove if needed)
-		firingIndex,
+
+		// Flag to prevent firing
+		locked,
+
 		// Actual callback list
 		list = [],
-		// Stack of fire calls for repeatable lists
-		stack = !options.once && [],
+
+		// Queue of execution data for repeatable lists
+		queue = [],
+
+		// Index of currently firing callback (modified by add/remove as needed)
+		firingIndex = -1,
+
 		// Fire callbacks
-		fire = function( data ) {
-			memory = options.memory && data;
-			fired = true;
-			firingIndex = firingStart || 0;
-			firingStart = 0;
-			firingLength = list.length;
-			firing = true;
-			for ( ; list && firingIndex < firingLength; firingIndex++ ) {
-				if ( list[ firingIndex ].apply( data[ 0 ], data[ 1 ] ) === false && options.stopOnFalse ) {
-					memory = false; // To prevent further calls using add
-					break;
+		fire = function() {
+
+			// Enforce single-firing
+			locked = options.once;
+
+			// Execute callbacks for all pending executions,
+			// respecting firingIndex overrides and runtime changes
+			fired = firing = true;
+			for ( ; queue.length; firingIndex = -1 ) {
+				memory = queue.shift();
+				while ( ++firingIndex < list.length ) {
+
+					// Run callback and check for early termination
+					if ( list[ firingIndex ].apply( memory[ 0 ], memory[ 1 ] ) === false &&
+						options.stopOnFalse ) {
+
+						// Jump to end and forget the data so .add doesn't re-fire
+						firingIndex = list.length;
+						memory = false;
+					}
 				}
 			}
+
+			// Forget the data if we're done with it
+			if ( !options.memory ) {
+				memory = false;
+			}
+
 			firing = false;
-			if ( list ) {
-				if ( stack ) {
-					if ( stack.length ) {
-						fire( stack.shift() );
-					}
-				} else if ( memory ) {
+
+			// Clean up if we're done firing for good
+			if ( locked ) {
+
+				// Keep an empty list if we have data for future add calls
+				if ( memory ) {
 					list = [];
+
+				// Otherwise, this object is spent
 				} else {
-					self.disable();
+					list = "";
 				}
 			}
 		},
+
 		// Actual Callbacks object
 		self = {
+
 			// Add a callback or a collection of callbacks to the list
 			add: function() {
 				if ( list ) {
-					// First, we save the current length
-					var start = list.length;
-					(function add( args ) {
+
+					// If we have memory from a past run, we should fire after adding
+					if ( memory && !firing ) {
+						firingIndex = list.length - 1;
+						queue.push( memory );
+					}
+
+					( function add( args ) {
 						jQuery.each( args, function( _, arg ) {
-							var type = jQuery.type( arg );
-							if ( type === "function" ) {
+							if ( jQuery.isFunction( arg ) ) {
 								if ( !options.unique || !self.has( arg ) ) {
 									list.push( arg );
 								}
-							} else if ( arg && arg.length && type !== "string" ) {
+							} else if ( arg && arg.length && jQuery.type( arg ) !== "string" ) {
+
 								// Inspect recursively
 								add( arg );
 							}
-						});
-					})( arguments );
-					// Do we need to add the callbacks to the
-					// current firing batch?
-					if ( firing ) {
-						firingLength = list.length;
-					// With memory, if we're not firing then
-					// we should call right away
-					} else if ( memory ) {
-						firingStart = start;
-						fire( memory );
+						} );
+					} )( arguments );
+
+					if ( memory && !firing ) {
+						fire();
 					}
 				}
 				return this;
 			},
+
 			// Remove a callback from the list
 			remove: function() {
-				if ( list ) {
-					jQuery.each( arguments, function( _, arg ) {
-						var index;
-						while ( ( index = jQuery.inArray( arg, list, index ) ) > -1 ) {
-							list.splice( index, 1 );
-							// Handle firing indexes
-							if ( firing ) {
-								if ( index <= firingLength ) {
-									firingLength--;
-								}
-								if ( index <= firingIndex ) {
-									firingIndex--;
-								}
-							}
+				jQuery.each( arguments, function( _, arg ) {
+					var index;
+					while ( ( index = jQuery.inArray( arg, list, index ) ) > -1 ) {
+						list.splice( index, 1 );
+
+						// Handle firing indexes
+						if ( index <= firingIndex ) {
+							firingIndex--;
 						}
-					});
-				}
+					}
+				} );
 				return this;
 			},
+
 			// Check if a given callback is in the list.
 			// If no argument is given, return whether or not list has callbacks attached.
 			has: function( fn ) {
-				return fn ? jQuery.inArray( fn, list ) > -1 : !!( list && list.length );
+				return fn ?
+					jQuery.inArray( fn, list ) > -1 :
+					list.length > 0;
 			},
+
 			// Remove all callbacks from the list
 			empty: function() {
-				list = [];
-				firingLength = 0;
-				return this;
-			},
-			// Have the list do nothing anymore
-			disable: function() {
-				list = stack = memory = undefined;
-				return this;
-			},
-			// Is it disabled?
-			disabled: function() {
-				return !list;
-			},
-			// Lock the list in its current state
-			lock: function() {
-				stack = undefined;
-				if ( !memory ) {
-					self.disable();
+				if ( list ) {
+					list = [];
 				}
 				return this;
 			},
-			// Is it locked?
-			locked: function() {
-				return !stack;
+
+			// Disable .fire and .add
+			// Abort any current/pending executions
+			// Clear all callbacks and values
+			disable: function() {
+				locked = queue = [];
+				list = memory = "";
+				return this;
 			},
+			disabled: function() {
+				return !list;
+			},
+
+			// Disable .fire
+			// Also disable .add unless we have memory (since it would have no effect)
+			// Abort any pending executions
+			lock: function() {
+				locked = queue = [];
+				if ( !memory ) {
+					list = memory = "";
+				}
+				return this;
+			},
+			locked: function() {
+				return !!locked;
+			},
+
 			// Call all callbacks with the given context and arguments
 			fireWith: function( context, args ) {
-				if ( list && ( !fired || stack ) ) {
+				if ( !locked ) {
 					args = args || [];
 					args = [ context, args.slice ? args.slice() : args ];
-					if ( firing ) {
-						stack.push( args );
-					} else {
-						fire( args );
+					queue.push( args );
+					if ( !firing ) {
+						fire();
 					}
 				}
 				return this;
 			},
+
 			// Call all the callbacks with the given arguments
 			fire: function() {
 				self.fireWith( this, arguments );
 				return this;
 			},
+
 			// To know if the callbacks have already been called at least once
 			fired: function() {
 				return !!fired;
@@ -11068,14 +17048,15 @@ jQuery.Callbacks = function( options ) {
 };
 
 
-jQuery.extend({
+jQuery.extend( {
 
 	Deferred: function( func ) {
 		var tuples = [
+
 				// action, add listener, listener list, final state
-				[ "resolve", "done", jQuery.Callbacks("once memory"), "resolved" ],
-				[ "reject", "fail", jQuery.Callbacks("once memory"), "rejected" ],
-				[ "notify", "progress", jQuery.Callbacks("memory") ]
+				[ "resolve", "done", jQuery.Callbacks( "once memory" ), "resolved" ],
+				[ "reject", "fail", jQuery.Callbacks( "once memory" ), "rejected" ],
+				[ "notify", "progress", jQuery.Callbacks( "memory" ) ]
 			],
 			state = "pending",
 			promise = {
@@ -11088,25 +17069,30 @@ jQuery.extend({
 				},
 				then: function( /* fnDone, fnFail, fnProgress */ ) {
 					var fns = arguments;
-					return jQuery.Deferred(function( newDefer ) {
+					return jQuery.Deferred( function( newDefer ) {
 						jQuery.each( tuples, function( i, tuple ) {
 							var fn = jQuery.isFunction( fns[ i ] ) && fns[ i ];
+
 							// deferred[ done | fail | progress ] for forwarding actions to newDefer
-							deferred[ tuple[1] ](function() {
+							deferred[ tuple[ 1 ] ]( function() {
 								var returned = fn && fn.apply( this, arguments );
 								if ( returned && jQuery.isFunction( returned.promise ) ) {
 									returned.promise()
+										.progress( newDefer.notify )
 										.done( newDefer.resolve )
-										.fail( newDefer.reject )
-										.progress( newDefer.notify );
+										.fail( newDefer.reject );
 								} else {
-									newDefer[ tuple[ 0 ] + "With" ]( this === promise ? newDefer.promise() : this, fn ? [ returned ] : arguments );
+									newDefer[ tuple[ 0 ] + "With" ](
+										this === promise ? newDefer.promise() : this,
+										fn ? [ returned ] : arguments
+									);
 								}
-							});
-						});
+							} );
+						} );
 						fns = null;
-					}).promise();
+					} ).promise();
 				},
+
 				// Get a promise for this deferred
 				// If obj is provided, the promise aspect is added to the object
 				promise: function( obj ) {
@@ -11124,11 +17110,12 @@ jQuery.extend({
 				stateString = tuple[ 3 ];
 
 			// promise[ done | fail | progress ] = list.add
-			promise[ tuple[1] ] = list.add;
+			promise[ tuple[ 1 ] ] = list.add;
 
 			// Handle state
 			if ( stateString ) {
-				list.add(function() {
+				list.add( function() {
+
 					// state = [ resolved | rejected ]
 					state = stateString;
 
@@ -11137,12 +17124,12 @@ jQuery.extend({
 			}
 
 			// deferred[ resolve | reject | notify ]
-			deferred[ tuple[0] ] = function() {
-				deferred[ tuple[0] + "With" ]( this === deferred ? promise : this, arguments );
+			deferred[ tuple[ 0 ] ] = function() {
+				deferred[ tuple[ 0 ] + "With" ]( this === deferred ? promise : this, arguments );
 				return this;
 			};
-			deferred[ tuple[0] + "With" ] = list.fireWith;
-		});
+			deferred[ tuple[ 0 ] + "With" ] = list.fireWith;
+		} );
 
 		// Make the deferred a promise
 		promise.promise( deferred );
@@ -11163,9 +17150,11 @@ jQuery.extend({
 			length = resolveValues.length,
 
 			// the count of uncompleted subordinates
-			remaining = length !== 1 || ( subordinate && jQuery.isFunction( subordinate.promise ) ) ? length : 0,
+			remaining = length !== 1 ||
+				( subordinate && jQuery.isFunction( subordinate.promise ) ) ? length : 0,
 
-			// the master Deferred. If resolveValues consist of only a single Deferred, just use that.
+			// the master Deferred.
+			// If resolveValues consist of only a single Deferred, just use that.
 			deferred = remaining === 1 ? subordinate : jQuery.Deferred(),
 
 			// Update function for both resolve and progress values
@@ -11183,7 +17172,7 @@ jQuery.extend({
 
 			progressValues, progressContexts, resolveContexts;
 
-		// add listeners to Deferred subordinates; treat others as resolved
+		// Add listeners to Deferred subordinates; treat others as resolved
 		if ( length > 1 ) {
 			progressValues = new Array( length );
 			progressContexts = new Array( length );
@@ -11191,36 +17180,38 @@ jQuery.extend({
 			for ( ; i < length; i++ ) {
 				if ( resolveValues[ i ] && jQuery.isFunction( resolveValues[ i ].promise ) ) {
 					resolveValues[ i ].promise()
+						.progress( updateFunc( i, progressContexts, progressValues ) )
 						.done( updateFunc( i, resolveContexts, resolveValues ) )
-						.fail( deferred.reject )
-						.progress( updateFunc( i, progressContexts, progressValues ) );
+						.fail( deferred.reject );
 				} else {
 					--remaining;
 				}
 			}
 		}
 
-		// if we're not waiting on anything, resolve the master
+		// If we're not waiting on anything, resolve the master
 		if ( !remaining ) {
 			deferred.resolveWith( resolveContexts, resolveValues );
 		}
 
 		return deferred.promise();
 	}
-});
+} );
 
 
 // The deferred used on DOM ready
 var readyList;
 
 jQuery.fn.ready = function( fn ) {
+
 	// Add the callback
 	jQuery.ready.promise().done( fn );
 
 	return this;
 };
 
-jQuery.extend({
+jQuery.extend( {
+
 	// Is the DOM ready to be used? Set to true once it occurs.
 	isReady: false,
 
@@ -11262,14 +17253,14 @@ jQuery.extend({
 			jQuery( document ).off( "ready" );
 		}
 	}
-});
+} );
 
 /**
  * The ready event handler and self cleanup method
  */
 function completed() {
-	document.removeEventListener( "DOMContentLoaded", completed, false );
-	window.removeEventListener( "load", completed, false );
+	document.removeEventListener( "DOMContentLoaded", completed );
+	window.removeEventListener( "load", completed );
 	jQuery.ready();
 }
 
@@ -11278,20 +17269,23 @@ jQuery.ready.promise = function( obj ) {
 
 		readyList = jQuery.Deferred();
 
-		// Catch cases where $(document).ready() is called after the browser event has already occurred.
-		// we once tried to use readyState "interactive" here, but it caused issues like the one
-		// discovered by ChrisS here: http://bugs.jquery.com/ticket/12282#comment:15
-		if ( document.readyState === "complete" ) {
+		// Catch cases where $(document).ready() is called
+		// after the browser event has already occurred.
+		// Support: IE9-10 only
+		// Older IE sometimes signals "interactive" too soon
+		if ( document.readyState === "complete" ||
+			( document.readyState !== "loading" && !document.documentElement.doScroll ) ) {
+
 			// Handle it asynchronously to allow scripts the opportunity to delay ready
-			setTimeout( jQuery.ready );
+			window.setTimeout( jQuery.ready );
 
 		} else {
 
 			// Use the handy event callback
-			document.addEventListener( "DOMContentLoaded", completed, false );
+			document.addEventListener( "DOMContentLoaded", completed );
 
 			// A fallback to window.onload, that will always work
-			window.addEventListener( "load", completed, false );
+			window.addEventListener( "load", completed );
 		}
 	}
 	return readyList.promise( obj );
@@ -11305,7 +17299,7 @@ jQuery.ready.promise();
 
 // Multifunctional method to get and set values of a collection
 // The value/s can optionally be executed if it's a function
-var access = jQuery.access = function( elems, fn, key, value, chainable, emptyGet, raw ) {
+var access = function( elems, fn, key, value, chainable, emptyGet, raw ) {
 	var i = 0,
 		len = elems.length,
 		bulk = key == null;
@@ -11314,7 +17308,7 @@ var access = jQuery.access = function( elems, fn, key, value, chainable, emptyGe
 	if ( jQuery.type( key ) === "object" ) {
 		chainable = true;
 		for ( i in key ) {
-			jQuery.access( elems, fn, i, key[i], true, emptyGet, raw );
+			access( elems, fn, i, key[ i ], true, emptyGet, raw );
 		}
 
 	// Sets one value
@@ -11326,6 +17320,7 @@ var access = jQuery.access = function( elems, fn, key, value, chainable, emptyGe
 		}
 
 		if ( bulk ) {
+
 			// Bulk operations run against the entire set
 			if ( raw ) {
 				fn.call( elems, value );
@@ -11342,7 +17337,11 @@ var access = jQuery.access = function( elems, fn, key, value, chainable, emptyGe
 
 		if ( fn ) {
 			for ( ; i < len; i++ ) {
-				fn( elems[i], key, raw ? value : value.call( elems[i], i, fn( elems[i], key ) ) );
+				fn(
+					elems[ i ], key, raw ?
+					value :
+					value.call( elems[ i ], i, fn( elems[ i ], key ) )
+				);
 			}
 		}
 	}
@@ -11353,14 +17352,10 @@ var access = jQuery.access = function( elems, fn, key, value, chainable, emptyGe
 		// Gets
 		bulk ?
 			fn.call( elems ) :
-			len ? fn( elems[0], key ) : emptyGet;
+			len ? fn( elems[ 0 ], key ) : emptyGet;
 };
+var acceptData = function( owner ) {
 
-
-/**
- * Determines whether an object can have data
- */
-jQuery.acceptData = function( owner ) {
 	// Accepts only:
 	//  - Node
 	//    - Node.ELEMENT_NODE
@@ -11372,66 +17367,79 @@ jQuery.acceptData = function( owner ) {
 };
 
 
-function Data() {
-	// Support: Android < 4,
-	// Old WebKit does not have Object.preventExtensions/freeze method,
-	// return new empty object instead with no [[set]] accessor
-	Object.defineProperty( this.cache = {}, 0, {
-		get: function() {
-			return {};
-		}
-	});
 
-	this.expando = jQuery.expando + Math.random();
+
+function Data() {
+	this.expando = jQuery.expando + Data.uid++;
 }
 
 Data.uid = 1;
-Data.accepts = jQuery.acceptData;
 
 Data.prototype = {
-	key: function( owner ) {
+
+	register: function( owner, initial ) {
+		var value = initial || {};
+
+		// If it is a node unlikely to be stringify-ed or looped over
+		// use plain assignment
+		if ( owner.nodeType ) {
+			owner[ this.expando ] = value;
+
+		// Otherwise secure it in a non-enumerable, non-writable property
+		// configurability must be true to allow the property to be
+		// deleted with the delete operator
+		} else {
+			Object.defineProperty( owner, this.expando, {
+				value: value,
+				writable: true,
+				configurable: true
+			} );
+		}
+		return owner[ this.expando ];
+	},
+	cache: function( owner ) {
+
 		// We can accept data for non-element nodes in modern browsers,
 		// but we should not, see #8335.
-		// Always return the key for a frozen object.
-		if ( !Data.accepts( owner ) ) {
-			return 0;
+		// Always return an empty object.
+		if ( !acceptData( owner ) ) {
+			return {};
 		}
 
-		var descriptor = {},
-			// Check if the owner object already has a cache key
-			unlock = owner[ this.expando ];
+		// Check if the owner object already has a cache
+		var value = owner[ this.expando ];
 
 		// If not, create one
-		if ( !unlock ) {
-			unlock = Data.uid++;
+		if ( !value ) {
+			value = {};
 
-			// Secure it in a non-enumerable, non-writable property
-			try {
-				descriptor[ this.expando ] = { value: unlock };
-				Object.defineProperties( owner, descriptor );
+			// We can accept data for non-element nodes in modern browsers,
+			// but we should not, see #8335.
+			// Always return an empty object.
+			if ( acceptData( owner ) ) {
 
-			// Support: Android < 4
-			// Fallback to a less secure definition
-			} catch ( e ) {
-				descriptor[ this.expando ] = unlock;
-				jQuery.extend( owner, descriptor );
+				// If it is a node unlikely to be stringify-ed or looped over
+				// use plain assignment
+				if ( owner.nodeType ) {
+					owner[ this.expando ] = value;
+
+				// Otherwise secure it in a non-enumerable property
+				// configurable must be true to allow the property to be
+				// deleted when data is removed
+				} else {
+					Object.defineProperty( owner, this.expando, {
+						value: value,
+						configurable: true
+					} );
+				}
 			}
 		}
 
-		// Ensure the cache object
-		if ( !this.cache[ unlock ] ) {
-			this.cache[ unlock ] = {};
-		}
-
-		return unlock;
+		return value;
 	},
 	set: function( owner, data, value ) {
 		var prop,
-			// There may be an unlock assigned to this node,
-			// if there is no entry for this "owner", create one inline
-			// and set the unlock as though an owner entry had always existed
-			unlock = this.key( owner ),
-			cache = this.cache[ unlock ];
+			cache = this.cache( owner );
 
 		// Handle: [ owner, key, value ] args
 		if ( typeof data === "string" ) {
@@ -11439,30 +17447,22 @@ Data.prototype = {
 
 		// Handle: [ owner, { properties } ] args
 		} else {
-			// Fresh assignments by object are shallow copied
-			if ( jQuery.isEmptyObject( cache ) ) {
-				jQuery.extend( this.cache[ unlock ], data );
-			// Otherwise, copy the properties one-by-one to the cache object
-			} else {
-				for ( prop in data ) {
-					cache[ prop ] = data[ prop ];
-				}
+
+			// Copy the properties one-by-one to the cache object
+			for ( prop in data ) {
+				cache[ prop ] = data[ prop ];
 			}
 		}
 		return cache;
 	},
 	get: function( owner, key ) {
-		// Either a valid cache is found, or will be created.
-		// New caches will be created and the unlock returned,
-		// allowing direct access to the newly created
-		// empty data object. A valid owner object must be provided.
-		var cache = this.cache[ this.key( owner ) ];
-
 		return key === undefined ?
-			cache : cache[ key ];
+			this.cache( owner ) :
+			owner[ this.expando ] && owner[ this.expando ][ key ];
 	},
 	access: function( owner, key, value ) {
 		var stored;
+
 		// In cases where either:
 		//
 		//   1. No key was specified
@@ -11475,15 +17475,15 @@ Data.prototype = {
 		//   2. The data stored at the key
 		//
 		if ( key === undefined ||
-				((key && typeof key === "string") && value === undefined) ) {
+				( ( key && typeof key === "string" ) && value === undefined ) ) {
 
 			stored = this.get( owner, key );
 
 			return stored !== undefined ?
-				stored : this.get( owner, jQuery.camelCase(key) );
+				stored : this.get( owner, jQuery.camelCase( key ) );
 		}
 
-		// [*]When the key is not a string, or both a key and value
+		// When the key is not a string, or both a key and value
 		// are specified, set or extend (existing objects) with either:
 		//
 		//   1. An object of properties
@@ -11497,15 +17497,20 @@ Data.prototype = {
 	},
 	remove: function( owner, key ) {
 		var i, name, camel,
-			unlock = this.key( owner ),
-			cache = this.cache[ unlock ];
+			cache = owner[ this.expando ];
+
+		if ( cache === undefined ) {
+			return;
+		}
 
 		if ( key === undefined ) {
-			this.cache[ unlock ] = {};
+			this.register( owner );
 
 		} else {
+
 			// Support array or space separated string of keys
 			if ( jQuery.isArray( key ) ) {
+
 				// If "name" is an array of keys...
 				// When data is initially created, via ("key", "val") signature,
 				// keys will be converted to camelCase.
@@ -11515,10 +17520,12 @@ Data.prototype = {
 				name = key.concat( key.map( jQuery.camelCase ) );
 			} else {
 				camel = jQuery.camelCase( key );
+
 				// Try the string as a key before any manipulation
 				if ( key in cache ) {
 					name = [ key, camel ];
 				} else {
+
 					// If a key with the spaces exists, use it.
 					// Otherwise, create an array by matching non-whitespace
 					name = camel;
@@ -11528,41 +17535,49 @@ Data.prototype = {
 			}
 
 			i = name.length;
+
 			while ( i-- ) {
 				delete cache[ name[ i ] ];
 			}
 		}
+
+		// Remove the expando if there's no more data
+		if ( key === undefined || jQuery.isEmptyObject( cache ) ) {
+
+			// Support: Chrome <= 35-45+
+			// Webkit & Blink performance suffers when deleting properties
+			// from DOM nodes, so set to undefined instead
+			// https://code.google.com/p/chromium/issues/detail?id=378607
+			if ( owner.nodeType ) {
+				owner[ this.expando ] = undefined;
+			} else {
+				delete owner[ this.expando ];
+			}
+		}
 	},
 	hasData: function( owner ) {
-		return !jQuery.isEmptyObject(
-			this.cache[ owner[ this.expando ] ] || {}
-		);
-	},
-	discard: function( owner ) {
-		if ( owner[ this.expando ] ) {
-			delete this.cache[ owner[ this.expando ] ];
-		}
+		var cache = owner[ this.expando ];
+		return cache !== undefined && !jQuery.isEmptyObject( cache );
 	}
 };
-var data_priv = new Data();
+var dataPriv = new Data();
 
-var data_user = new Data();
+var dataUser = new Data();
 
 
 
-/*
-	Implementation Summary
+//	Implementation Summary
+//
+//	1. Enforce API surface and semantic compatibility with 1.9.x branch
+//	2. Improve the module's maintainability by reducing the storage
+//		paths to a single mechanism.
+//	3. Use the same single mechanism to support "private" and "user" data.
+//	4. _Never_ expose "private" data to user code (TODO: Drop _data, _removeData)
+//	5. Avoid exposing implementation details on user objects (eg. expando properties)
+//	6. Provide a clear path for implementation upgrade to WeakMap in 2014
 
-	1. Enforce API surface and semantic compatibility with 1.9.x branch
-	2. Improve the module's maintainability by reducing the storage
-		paths to a single mechanism.
-	3. Use the same single mechanism to support "private" and "user" data.
-	4. _Never_ expose "private" data to user code (TODO: Drop _data, _removeData)
-	5. Avoid exposing implementation details on user objects (eg. expando properties)
-	6. Provide a clear path for implementation upgrade to WeakMap in 2014
-*/
 var rbrace = /^(?:\{[\w\W]*\}|\[[\w\W]*\])$/,
-	rmultiDash = /([A-Z])/g;
+	rmultiDash = /[A-Z]/g;
 
 function dataAttr( elem, key, data ) {
 	var name;
@@ -11570,7 +17585,7 @@ function dataAttr( elem, key, data ) {
 	// If nothing was found internally, try to fetch any
 	// data from the HTML5 data-* attribute
 	if ( data === undefined && elem.nodeType === 1 ) {
-		name = "data-" + key.replace( rmultiDash, "-$1" ).toLowerCase();
+		name = "data-" + key.replace( rmultiDash, "-$&" ).toLowerCase();
 		data = elem.getAttribute( name );
 
 		if ( typeof data === "string" ) {
@@ -11578,14 +17593,15 @@ function dataAttr( elem, key, data ) {
 				data = data === "true" ? true :
 					data === "false" ? false :
 					data === "null" ? null :
+
 					// Only convert to a number if it doesn't change the string
 					+data + "" === data ? +data :
 					rbrace.test( data ) ? jQuery.parseJSON( data ) :
 					data;
-			} catch( e ) {}
+			} catch ( e ) {}
 
 			// Make sure we set the data so it isn't changed later
-			data_user.set( elem, key, data );
+			dataUser.set( elem, key, data );
 		} else {
 			data = undefined;
 		}
@@ -11593,31 +17609,31 @@ function dataAttr( elem, key, data ) {
 	return data;
 }
 
-jQuery.extend({
+jQuery.extend( {
 	hasData: function( elem ) {
-		return data_user.hasData( elem ) || data_priv.hasData( elem );
+		return dataUser.hasData( elem ) || dataPriv.hasData( elem );
 	},
 
 	data: function( elem, name, data ) {
-		return data_user.access( elem, name, data );
+		return dataUser.access( elem, name, data );
 	},
 
 	removeData: function( elem, name ) {
-		data_user.remove( elem, name );
+		dataUser.remove( elem, name );
 	},
 
 	// TODO: Now that all calls to _data and _removeData have been replaced
-	// with direct calls to data_priv methods, these can be deprecated.
+	// with direct calls to dataPriv methods, these can be deprecated.
 	_data: function( elem, name, data ) {
-		return data_priv.access( elem, name, data );
+		return dataPriv.access( elem, name, data );
 	},
 
 	_removeData: function( elem, name ) {
-		data_priv.remove( elem, name );
+		dataPriv.remove( elem, name );
 	}
-});
+} );
 
-jQuery.fn.extend({
+jQuery.fn.extend( {
 	data: function( key, value ) {
 		var i, name, data,
 			elem = this[ 0 ],
@@ -11626,9 +17642,9 @@ jQuery.fn.extend({
 		// Gets all values
 		if ( key === undefined ) {
 			if ( this.length ) {
-				data = data_user.get( elem );
+				data = dataUser.get( elem );
 
-				if ( elem.nodeType === 1 && !data_priv.get( elem, "hasDataAttrs" ) ) {
+				if ( elem.nodeType === 1 && !dataPriv.get( elem, "hasDataAttrs" ) ) {
 					i = attrs.length;
 					while ( i-- ) {
 
@@ -11637,12 +17653,12 @@ jQuery.fn.extend({
 						if ( attrs[ i ] ) {
 							name = attrs[ i ].name;
 							if ( name.indexOf( "data-" ) === 0 ) {
-								name = jQuery.camelCase( name.slice(5) );
+								name = jQuery.camelCase( name.slice( 5 ) );
 								dataAttr( elem, name, data[ name ] );
 							}
 						}
 					}
-					data_priv.set( elem, "hasDataAttrs", true );
+					dataPriv.set( elem, "hasDataAttrs", true );
 				}
 			}
 
@@ -11651,14 +17667,13 @@ jQuery.fn.extend({
 
 		// Sets multiple values
 		if ( typeof key === "object" ) {
-			return this.each(function() {
-				data_user.set( this, key );
-			});
+			return this.each( function() {
+				dataUser.set( this, key );
+			} );
 		}
 
 		return access( this, function( value ) {
-			var data,
-				camelKey = jQuery.camelCase( key );
+			var data, camelKey;
 
 			// The calling jQuery object (element matches) is not empty
 			// (and therefore has an element appears at this[ 0 ]) and the
@@ -11666,16 +17681,24 @@ jQuery.fn.extend({
 			// will result in `undefined` for elem = this[ 0 ] which will
 			// throw an exception if an attempt to read a data cache is made.
 			if ( elem && value === undefined ) {
+
 				// Attempt to get data from the cache
 				// with the key as-is
-				data = data_user.get( elem, key );
+				data = dataUser.get( elem, key ) ||
+
+					// Try to find dashed key if it exists (gh-2779)
+					// This is for 2.2.x only
+					dataUser.get( elem, key.replace( rmultiDash, "-$&" ).toLowerCase() );
+
 				if ( data !== undefined ) {
 					return data;
 				}
 
+				camelKey = jQuery.camelCase( key );
+
 				// Attempt to get data from the cache
 				// with the key camelized
-				data = data_user.get( elem, camelKey );
+				data = dataUser.get( elem, camelKey );
 				if ( data !== undefined ) {
 					return data;
 				}
@@ -11692,46 +17715,48 @@ jQuery.fn.extend({
 			}
 
 			// Set the data...
-			this.each(function() {
+			camelKey = jQuery.camelCase( key );
+			this.each( function() {
+
 				// First, attempt to store a copy or reference of any
 				// data that might've been store with a camelCased key.
-				var data = data_user.get( this, camelKey );
+				var data = dataUser.get( this, camelKey );
 
 				// For HTML5 data-* attribute interop, we have to
 				// store property names with dashes in a camelCase form.
 				// This might not apply to all properties...*
-				data_user.set( this, camelKey, value );
+				dataUser.set( this, camelKey, value );
 
 				// *... In the case of properties that might _actually_
 				// have dashes, we need to also store a copy of that
 				// unchanged property.
-				if ( key.indexOf("-") !== -1 && data !== undefined ) {
-					data_user.set( this, key, value );
+				if ( key.indexOf( "-" ) > -1 && data !== undefined ) {
+					dataUser.set( this, key, value );
 				}
-			});
+			} );
 		}, null, value, arguments.length > 1, null, true );
 	},
 
 	removeData: function( key ) {
-		return this.each(function() {
-			data_user.remove( this, key );
-		});
+		return this.each( function() {
+			dataUser.remove( this, key );
+		} );
 	}
-});
+} );
 
 
-jQuery.extend({
+jQuery.extend( {
 	queue: function( elem, type, data ) {
 		var queue;
 
 		if ( elem ) {
 			type = ( type || "fx" ) + "queue";
-			queue = data_priv.get( elem, type );
+			queue = dataPriv.get( elem, type );
 
 			// Speed up dequeue by getting out quickly if this is just a lookup
 			if ( data ) {
 				if ( !queue || jQuery.isArray( data ) ) {
-					queue = data_priv.access( elem, type, jQuery.makeArray(data) );
+					queue = dataPriv.access( elem, type, jQuery.makeArray( data ) );
 				} else {
 					queue.push( data );
 				}
@@ -11765,7 +17790,7 @@ jQuery.extend({
 				queue.unshift( "inprogress" );
 			}
 
-			// clear up the last queue stop function
+			// Clear up the last queue stop function
 			delete hooks.stop;
 			fn.call( elem, next, hooks );
 		}
@@ -11775,18 +17800,18 @@ jQuery.extend({
 		}
 	},
 
-	// not intended for public consumption - generates a queueHooks object, or returns the current one
+	// Not public - generate a queueHooks object, or return the current one
 	_queueHooks: function( elem, type ) {
 		var key = type + "queueHooks";
-		return data_priv.get( elem, key ) || data_priv.access( elem, key, {
-			empty: jQuery.Callbacks("once memory").add(function() {
-				data_priv.remove( elem, [ type + "queue", key ] );
-			})
-		});
+		return dataPriv.get( elem, key ) || dataPriv.access( elem, key, {
+			empty: jQuery.Callbacks( "once memory" ).add( function() {
+				dataPriv.remove( elem, [ type + "queue", key ] );
+			} )
+		} );
 	}
-});
+} );
 
-jQuery.fn.extend({
+jQuery.fn.extend( {
 	queue: function( type, data ) {
 		var setter = 2;
 
@@ -11797,30 +17822,31 @@ jQuery.fn.extend({
 		}
 
 		if ( arguments.length < setter ) {
-			return jQuery.queue( this[0], type );
+			return jQuery.queue( this[ 0 ], type );
 		}
 
 		return data === undefined ?
 			this :
-			this.each(function() {
+			this.each( function() {
 				var queue = jQuery.queue( this, type, data );
 
-				// ensure a hooks for this queue
+				// Ensure a hooks for this queue
 				jQuery._queueHooks( this, type );
 
-				if ( type === "fx" && queue[0] !== "inprogress" ) {
+				if ( type === "fx" && queue[ 0 ] !== "inprogress" ) {
 					jQuery.dequeue( this, type );
 				}
-			});
+			} );
 	},
 	dequeue: function( type ) {
-		return this.each(function() {
+		return this.each( function() {
 			jQuery.dequeue( this, type );
-		});
+		} );
 	},
 	clearQueue: function( type ) {
 		return this.queue( type || "fx", [] );
 	},
+
 	// Get a promise resolved when queues of a certain type
 	// are emptied (fx is the type by default)
 	promise: function( type, obj ) {
@@ -11842,7 +17868,7 @@ jQuery.fn.extend({
 		type = type || "fx";
 
 		while ( i-- ) {
-			tmp = data_priv.get( elements[ i ], type + "queueHooks" );
+			tmp = dataPriv.get( elements[ i ], type + "queueHooks" );
 			if ( tmp && tmp.empty ) {
 				count++;
 				tmp.empty.add( resolve );
@@ -11851,57 +17877,267 @@ jQuery.fn.extend({
 		resolve();
 		return defer.promise( obj );
 	}
-});
-var pnum = (/[+-]?(?:\d*\.|)\d+(?:[eE][+-]?\d+|)/).source;
+} );
+var pnum = ( /[+-]?(?:\d*\.|)\d+(?:[eE][+-]?\d+|)/ ).source;
+
+var rcssNum = new RegExp( "^(?:([+-])=|)(" + pnum + ")([a-z%]*)$", "i" );
+
 
 var cssExpand = [ "Top", "Right", "Bottom", "Left" ];
 
 var isHidden = function( elem, el ) {
+
 		// isHidden might be called from jQuery#filter function;
 		// in that case, element will be second argument
 		elem = el || elem;
-		return jQuery.css( elem, "display" ) === "none" || !jQuery.contains( elem.ownerDocument, elem );
+		return jQuery.css( elem, "display" ) === "none" ||
+			!jQuery.contains( elem.ownerDocument, elem );
 	};
 
-var rcheckableType = (/^(?:checkbox|radio)$/i);
+
+
+function adjustCSS( elem, prop, valueParts, tween ) {
+	var adjusted,
+		scale = 1,
+		maxIterations = 20,
+		currentValue = tween ?
+			function() { return tween.cur(); } :
+			function() { return jQuery.css( elem, prop, "" ); },
+		initial = currentValue(),
+		unit = valueParts && valueParts[ 3 ] || ( jQuery.cssNumber[ prop ] ? "" : "px" ),
+
+		// Starting value computation is required for potential unit mismatches
+		initialInUnit = ( jQuery.cssNumber[ prop ] || unit !== "px" && +initial ) &&
+			rcssNum.exec( jQuery.css( elem, prop ) );
+
+	if ( initialInUnit && initialInUnit[ 3 ] !== unit ) {
+
+		// Trust units reported by jQuery.css
+		unit = unit || initialInUnit[ 3 ];
+
+		// Make sure we update the tween properties later on
+		valueParts = valueParts || [];
+
+		// Iteratively approximate from a nonzero starting point
+		initialInUnit = +initial || 1;
+
+		do {
+
+			// If previous iteration zeroed out, double until we get *something*.
+			// Use string for doubling so we don't accidentally see scale as unchanged below
+			scale = scale || ".5";
+
+			// Adjust and apply
+			initialInUnit = initialInUnit / scale;
+			jQuery.style( elem, prop, initialInUnit + unit );
+
+		// Update scale, tolerating zero or NaN from tween.cur()
+		// Break the loop if scale is unchanged or perfect, or if we've just had enough.
+		} while (
+			scale !== ( scale = currentValue() / initial ) && scale !== 1 && --maxIterations
+		);
+	}
+
+	if ( valueParts ) {
+		initialInUnit = +initialInUnit || +initial || 0;
+
+		// Apply relative offset (+=/-=) if specified
+		adjusted = valueParts[ 1 ] ?
+			initialInUnit + ( valueParts[ 1 ] + 1 ) * valueParts[ 2 ] :
+			+valueParts[ 2 ];
+		if ( tween ) {
+			tween.unit = unit;
+			tween.start = initialInUnit;
+			tween.end = adjusted;
+		}
+	}
+	return adjusted;
+}
+var rcheckableType = ( /^(?:checkbox|radio)$/i );
+
+var rtagName = ( /<([\w:-]+)/ );
+
+var rscriptType = ( /^$|\/(?:java|ecma)script/i );
 
 
 
-(function() {
+// We have to close these tags to support XHTML (#13200)
+var wrapMap = {
+
+	// Support: IE9
+	option: [ 1, "<select multiple='multiple'>", "</select>" ],
+
+	// XHTML parsers do not magically insert elements in the
+	// same way that tag soup parsers do. So we cannot shorten
+	// this by omitting <tbody> or other required elements.
+	thead: [ 1, "<table>", "</table>" ],
+	col: [ 2, "<table><colgroup>", "</colgroup></table>" ],
+	tr: [ 2, "<table><tbody>", "</tbody></table>" ],
+	td: [ 3, "<table><tbody><tr>", "</tr></tbody></table>" ],
+
+	_default: [ 0, "", "" ]
+};
+
+// Support: IE9
+wrapMap.optgroup = wrapMap.option;
+
+wrapMap.tbody = wrapMap.tfoot = wrapMap.colgroup = wrapMap.caption = wrapMap.thead;
+wrapMap.th = wrapMap.td;
+
+
+function getAll( context, tag ) {
+
+	// Support: IE9-11+
+	// Use typeof to avoid zero-argument method invocation on host objects (#15151)
+	var ret = typeof context.getElementsByTagName !== "undefined" ?
+			context.getElementsByTagName( tag || "*" ) :
+			typeof context.querySelectorAll !== "undefined" ?
+				context.querySelectorAll( tag || "*" ) :
+			[];
+
+	return tag === undefined || tag && jQuery.nodeName( context, tag ) ?
+		jQuery.merge( [ context ], ret ) :
+		ret;
+}
+
+
+// Mark scripts as having already been evaluated
+function setGlobalEval( elems, refElements ) {
+	var i = 0,
+		l = elems.length;
+
+	for ( ; i < l; i++ ) {
+		dataPriv.set(
+			elems[ i ],
+			"globalEval",
+			!refElements || dataPriv.get( refElements[ i ], "globalEval" )
+		);
+	}
+}
+
+
+var rhtml = /<|&#?\w+;/;
+
+function buildFragment( elems, context, scripts, selection, ignored ) {
+	var elem, tmp, tag, wrap, contains, j,
+		fragment = context.createDocumentFragment(),
+		nodes = [],
+		i = 0,
+		l = elems.length;
+
+	for ( ; i < l; i++ ) {
+		elem = elems[ i ];
+
+		if ( elem || elem === 0 ) {
+
+			// Add nodes directly
+			if ( jQuery.type( elem ) === "object" ) {
+
+				// Support: Android<4.1, PhantomJS<2
+				// push.apply(_, arraylike) throws on ancient WebKit
+				jQuery.merge( nodes, elem.nodeType ? [ elem ] : elem );
+
+			// Convert non-html into a text node
+			} else if ( !rhtml.test( elem ) ) {
+				nodes.push( context.createTextNode( elem ) );
+
+			// Convert html into DOM nodes
+			} else {
+				tmp = tmp || fragment.appendChild( context.createElement( "div" ) );
+
+				// Deserialize a standard representation
+				tag = ( rtagName.exec( elem ) || [ "", "" ] )[ 1 ].toLowerCase();
+				wrap = wrapMap[ tag ] || wrapMap._default;
+				tmp.innerHTML = wrap[ 1 ] + jQuery.htmlPrefilter( elem ) + wrap[ 2 ];
+
+				// Descend through wrappers to the right content
+				j = wrap[ 0 ];
+				while ( j-- ) {
+					tmp = tmp.lastChild;
+				}
+
+				// Support: Android<4.1, PhantomJS<2
+				// push.apply(_, arraylike) throws on ancient WebKit
+				jQuery.merge( nodes, tmp.childNodes );
+
+				// Remember the top-level container
+				tmp = fragment.firstChild;
+
+				// Ensure the created nodes are orphaned (#12392)
+				tmp.textContent = "";
+			}
+		}
+	}
+
+	// Remove wrapper from fragment
+	fragment.textContent = "";
+
+	i = 0;
+	while ( ( elem = nodes[ i++ ] ) ) {
+
+		// Skip elements already in the context collection (trac-4087)
+		if ( selection && jQuery.inArray( elem, selection ) > -1 ) {
+			if ( ignored ) {
+				ignored.push( elem );
+			}
+			continue;
+		}
+
+		contains = jQuery.contains( elem.ownerDocument, elem );
+
+		// Append to fragment
+		tmp = getAll( fragment.appendChild( elem ), "script" );
+
+		// Preserve script evaluation history
+		if ( contains ) {
+			setGlobalEval( tmp );
+		}
+
+		// Capture executables
+		if ( scripts ) {
+			j = 0;
+			while ( ( elem = tmp[ j++ ] ) ) {
+				if ( rscriptType.test( elem.type || "" ) ) {
+					scripts.push( elem );
+				}
+			}
+		}
+	}
+
+	return fragment;
+}
+
+
+( function() {
 	var fragment = document.createDocumentFragment(),
 		div = fragment.appendChild( document.createElement( "div" ) ),
 		input = document.createElement( "input" );
 
-	// #11217 - WebKit loses check when the name is after the checked attribute
+	// Support: Android 4.0-4.3, Safari<=5.1
+	// Check state lost if the name is set (#11217)
 	// Support: Windows Web Apps (WWA)
-	// `name` and `type` need .setAttribute for WWA
+	// `name` and `type` must use .setAttribute for WWA (#14901)
 	input.setAttribute( "type", "radio" );
 	input.setAttribute( "checked", "checked" );
 	input.setAttribute( "name", "t" );
 
 	div.appendChild( input );
 
-	// Support: Safari 5.1, iOS 5.1, Android 4.x, Android 2.3
-	// old WebKit doesn't clone checked state correctly in fragments
+	// Support: Safari<=5.1, Android<4.2
+	// Older WebKit doesn't clone checked state correctly in fragments
 	support.checkClone = div.cloneNode( true ).cloneNode( true ).lastChild.checked;
 
+	// Support: IE<=11+
 	// Make sure textarea (and checkbox) defaultValue is properly cloned
-	// Support: IE9-IE11+
 	div.innerHTML = "<textarea>x</textarea>";
 	support.noCloneChecked = !!div.cloneNode( true ).lastChild.defaultValue;
-})();
-var strundefined = typeof undefined;
-
-
-
-support.focusinBubbles = "onfocusin" in window;
+} )();
 
 
 var
 	rkeyEvent = /^key/,
-	rmouseEvent = /^(?:mouse|pointer|contextmenu)|click/,
-	rfocusMorph = /^(?:focusinfocus|focusoutblur)$/,
-	rtypenamespace = /^([^.]*)(?:\.(.+)|)$/;
+	rmouseEvent = /^(?:mouse|pointer|contextmenu|drag|drop)|click/,
+	rtypenamespace = /^([^.]*)(?:\.(.+)|)/;
 
 function returnTrue() {
 	return true;
@@ -11911,10 +18147,73 @@ function returnFalse() {
 	return false;
 }
 
+// Support: IE9
+// See #13393 for more info
 function safeActiveElement() {
 	try {
 		return document.activeElement;
 	} catch ( err ) { }
+}
+
+function on( elem, types, selector, data, fn, one ) {
+	var origFn, type;
+
+	// Types can be a map of types/handlers
+	if ( typeof types === "object" ) {
+
+		// ( types-Object, selector, data )
+		if ( typeof selector !== "string" ) {
+
+			// ( types-Object, data )
+			data = data || selector;
+			selector = undefined;
+		}
+		for ( type in types ) {
+			on( elem, type, selector, data, types[ type ], one );
+		}
+		return elem;
+	}
+
+	if ( data == null && fn == null ) {
+
+		// ( types, fn )
+		fn = selector;
+		data = selector = undefined;
+	} else if ( fn == null ) {
+		if ( typeof selector === "string" ) {
+
+			// ( types, selector, fn )
+			fn = data;
+			data = undefined;
+		} else {
+
+			// ( types, data, fn )
+			fn = data;
+			data = selector;
+			selector = undefined;
+		}
+	}
+	if ( fn === false ) {
+		fn = returnFalse;
+	} else if ( !fn ) {
+		return elem;
+	}
+
+	if ( one === 1 ) {
+		origFn = fn;
+		fn = function( event ) {
+
+			// Can use an empty set, since event contains the info
+			jQuery().off( event );
+			return origFn.apply( this, arguments );
+		};
+
+		// Use same guid so caller can remove using origFn
+		fn.guid = origFn.guid || ( origFn.guid = jQuery.guid++ );
+	}
+	return elem.each( function() {
+		jQuery.event.add( this, types, fn, data, selector );
+	} );
 }
 
 /*
@@ -11930,7 +18229,7 @@ jQuery.event = {
 		var handleObjIn, eventHandle, tmp,
 			events, t, handleObj,
 			special, handlers, type, namespaces, origType,
-			elemData = data_priv.get( elem );
+			elemData = dataPriv.get( elem );
 
 		// Don't attach events to noData or text/comment nodes (but allow plain objects)
 		if ( !elemData ) {
@@ -11950,14 +18249,15 @@ jQuery.event = {
 		}
 
 		// Init the element's event structure and main handler, if this is the first
-		if ( !(events = elemData.events) ) {
+		if ( !( events = elemData.events ) ) {
 			events = elemData.events = {};
 		}
-		if ( !(eventHandle = elemData.handle) ) {
+		if ( !( eventHandle = elemData.handle ) ) {
 			eventHandle = elemData.handle = function( e ) {
+
 				// Discard the second event of a jQuery.event.trigger() and
 				// when an event is called after a page has unloaded
-				return typeof jQuery !== strundefined && jQuery.event.triggered !== e.type ?
+				return typeof jQuery !== "undefined" && jQuery.event.triggered !== e.type ?
 					jQuery.event.dispatch.apply( elem, arguments ) : undefined;
 			};
 		}
@@ -11966,9 +18266,9 @@ jQuery.event = {
 		types = ( types || "" ).match( rnotwhite ) || [ "" ];
 		t = types.length;
 		while ( t-- ) {
-			tmp = rtypenamespace.exec( types[t] ) || [];
-			type = origType = tmp[1];
-			namespaces = ( tmp[2] || "" ).split( "." ).sort();
+			tmp = rtypenamespace.exec( types[ t ] ) || [];
+			type = origType = tmp[ 1 ];
+			namespaces = ( tmp[ 2 ] || "" ).split( "." ).sort();
 
 			// There *must* be a type, no attaching namespace-only handlers
 			if ( !type ) {
@@ -11985,7 +18285,7 @@ jQuery.event = {
 			special = jQuery.event.special[ type ] || {};
 
 			// handleObj is passed to all event handlers
-			handleObj = jQuery.extend({
+			handleObj = jQuery.extend( {
 				type: type,
 				origType: origType,
 				data: data,
@@ -11993,18 +18293,20 @@ jQuery.event = {
 				guid: handler.guid,
 				selector: selector,
 				needsContext: selector && jQuery.expr.match.needsContext.test( selector ),
-				namespace: namespaces.join(".")
+				namespace: namespaces.join( "." )
 			}, handleObjIn );
 
 			// Init the event handler queue if we're the first
-			if ( !(handlers = events[ type ]) ) {
+			if ( !( handlers = events[ type ] ) ) {
 				handlers = events[ type ] = [];
 				handlers.delegateCount = 0;
 
 				// Only use addEventListener if the special events handler returns false
-				if ( !special.setup || special.setup.call( elem, data, namespaces, eventHandle ) === false ) {
+				if ( !special.setup ||
+					special.setup.call( elem, data, namespaces, eventHandle ) === false ) {
+
 					if ( elem.addEventListener ) {
-						elem.addEventListener( type, eventHandle, false );
+						elem.addEventListener( type, eventHandle );
 					}
 				}
 			}
@@ -12036,9 +18338,9 @@ jQuery.event = {
 		var j, origCount, tmp,
 			events, t, handleObj,
 			special, handlers, type, namespaces, origType,
-			elemData = data_priv.hasData( elem ) && data_priv.get( elem );
+			elemData = dataPriv.hasData( elem ) && dataPriv.get( elem );
 
-		if ( !elemData || !(events = elemData.events) ) {
+		if ( !elemData || !( events = elemData.events ) ) {
 			return;
 		}
 
@@ -12046,9 +18348,9 @@ jQuery.event = {
 		types = ( types || "" ).match( rnotwhite ) || [ "" ];
 		t = types.length;
 		while ( t-- ) {
-			tmp = rtypenamespace.exec( types[t] ) || [];
-			type = origType = tmp[1];
-			namespaces = ( tmp[2] || "" ).split( "." ).sort();
+			tmp = rtypenamespace.exec( types[ t ] ) || [];
+			type = origType = tmp[ 1 ];
+			namespaces = ( tmp[ 2 ] || "" ).split( "." ).sort();
 
 			// Unbind all events (on this namespace, if provided) for the element
 			if ( !type ) {
@@ -12061,7 +18363,8 @@ jQuery.event = {
 			special = jQuery.event.special[ type ] || {};
 			type = ( selector ? special.delegateType : special.bindType ) || type;
 			handlers = events[ type ] || [];
-			tmp = tmp[2] && new RegExp( "(^|\\.)" + namespaces.join("\\.(?:.*\\.|)") + "(\\.|$)" );
+			tmp = tmp[ 2 ] &&
+				new RegExp( "(^|\\.)" + namespaces.join( "\\.(?:.*\\.|)" ) + "(\\.|$)" );
 
 			// Remove matching events
 			origCount = j = handlers.length;
@@ -12071,7 +18374,8 @@ jQuery.event = {
 				if ( ( mappedTypes || origType === handleObj.origType ) &&
 					( !handler || handler.guid === handleObj.guid ) &&
 					( !tmp || tmp.test( handleObj.namespace ) ) &&
-					( !selector || selector === handleObj.selector || selector === "**" && handleObj.selector ) ) {
+					( !selector || selector === handleObj.selector ||
+						selector === "**" && handleObj.selector ) ) {
 					handlers.splice( j, 1 );
 
 					if ( handleObj.selector ) {
@@ -12086,7 +18390,9 @@ jQuery.event = {
 			// Remove generic event handler if we removed something and no more handlers exist
 			// (avoids potential for endless recursion during removal of special event handlers)
 			if ( origCount && !handlers.length ) {
-				if ( !special.teardown || special.teardown.call( elem, namespaces, elemData.handle ) === false ) {
+				if ( !special.teardown ||
+					special.teardown.call( elem, namespaces, elemData.handle ) === false ) {
+
 					jQuery.removeEvent( elem, type, elemData.handle );
 				}
 
@@ -12094,143 +18400,10 @@ jQuery.event = {
 			}
 		}
 
-		// Remove the expando if it's no longer used
+		// Remove data and the expando if it's no longer used
 		if ( jQuery.isEmptyObject( events ) ) {
-			delete elemData.handle;
-			data_priv.remove( elem, "events" );
+			dataPriv.remove( elem, "handle events" );
 		}
-	},
-
-	trigger: function( event, data, elem, onlyHandlers ) {
-
-		var i, cur, tmp, bubbleType, ontype, handle, special,
-			eventPath = [ elem || document ],
-			type = hasOwn.call( event, "type" ) ? event.type : event,
-			namespaces = hasOwn.call( event, "namespace" ) ? event.namespace.split(".") : [];
-
-		cur = tmp = elem = elem || document;
-
-		// Don't do events on text and comment nodes
-		if ( elem.nodeType === 3 || elem.nodeType === 8 ) {
-			return;
-		}
-
-		// focus/blur morphs to focusin/out; ensure we're not firing them right now
-		if ( rfocusMorph.test( type + jQuery.event.triggered ) ) {
-			return;
-		}
-
-		if ( type.indexOf(".") >= 0 ) {
-			// Namespaced trigger; create a regexp to match event type in handle()
-			namespaces = type.split(".");
-			type = namespaces.shift();
-			namespaces.sort();
-		}
-		ontype = type.indexOf(":") < 0 && "on" + type;
-
-		// Caller can pass in a jQuery.Event object, Object, or just an event type string
-		event = event[ jQuery.expando ] ?
-			event :
-			new jQuery.Event( type, typeof event === "object" && event );
-
-		// Trigger bitmask: & 1 for native handlers; & 2 for jQuery (always true)
-		event.isTrigger = onlyHandlers ? 2 : 3;
-		event.namespace = namespaces.join(".");
-		event.namespace_re = event.namespace ?
-			new RegExp( "(^|\\.)" + namespaces.join("\\.(?:.*\\.|)") + "(\\.|$)" ) :
-			null;
-
-		// Clean up the event in case it is being reused
-		event.result = undefined;
-		if ( !event.target ) {
-			event.target = elem;
-		}
-
-		// Clone any incoming data and prepend the event, creating the handler arg list
-		data = data == null ?
-			[ event ] :
-			jQuery.makeArray( data, [ event ] );
-
-		// Allow special events to draw outside the lines
-		special = jQuery.event.special[ type ] || {};
-		if ( !onlyHandlers && special.trigger && special.trigger.apply( elem, data ) === false ) {
-			return;
-		}
-
-		// Determine event propagation path in advance, per W3C events spec (#9951)
-		// Bubble up to document, then to window; watch for a global ownerDocument var (#9724)
-		if ( !onlyHandlers && !special.noBubble && !jQuery.isWindow( elem ) ) {
-
-			bubbleType = special.delegateType || type;
-			if ( !rfocusMorph.test( bubbleType + type ) ) {
-				cur = cur.parentNode;
-			}
-			for ( ; cur; cur = cur.parentNode ) {
-				eventPath.push( cur );
-				tmp = cur;
-			}
-
-			// Only add window if we got to document (e.g., not plain obj or detached DOM)
-			if ( tmp === (elem.ownerDocument || document) ) {
-				eventPath.push( tmp.defaultView || tmp.parentWindow || window );
-			}
-		}
-
-		// Fire handlers on the event path
-		i = 0;
-		while ( (cur = eventPath[i++]) && !event.isPropagationStopped() ) {
-
-			event.type = i > 1 ?
-				bubbleType :
-				special.bindType || type;
-
-			// jQuery handler
-			handle = ( data_priv.get( cur, "events" ) || {} )[ event.type ] && data_priv.get( cur, "handle" );
-			if ( handle ) {
-				handle.apply( cur, data );
-			}
-
-			// Native handler
-			handle = ontype && cur[ ontype ];
-			if ( handle && handle.apply && jQuery.acceptData( cur ) ) {
-				event.result = handle.apply( cur, data );
-				if ( event.result === false ) {
-					event.preventDefault();
-				}
-			}
-		}
-		event.type = type;
-
-		// If nobody prevented the default action, do it now
-		if ( !onlyHandlers && !event.isDefaultPrevented() ) {
-
-			if ( (!special._default || special._default.apply( eventPath.pop(), data ) === false) &&
-				jQuery.acceptData( elem ) ) {
-
-				// Call a native DOM method on the target with the same name name as the event.
-				// Don't do default actions on window, that's where global variables be (#6170)
-				if ( ontype && jQuery.isFunction( elem[ type ] ) && !jQuery.isWindow( elem ) ) {
-
-					// Don't re-trigger an onFOO event when we call its FOO() method
-					tmp = elem[ ontype ];
-
-					if ( tmp ) {
-						elem[ ontype ] = null;
-					}
-
-					// Prevent re-triggering of the same event, since we already bubbled it above
-					jQuery.event.triggered = type;
-					elem[ type ]();
-					jQuery.event.triggered = undefined;
-
-					if ( tmp ) {
-						elem[ ontype ] = tmp;
-					}
-				}
-			}
-		}
-
-		return event.result;
 	},
 
 	dispatch: function( event ) {
@@ -12241,11 +18414,11 @@ jQuery.event = {
 		var i, j, ret, matched, handleObj,
 			handlerQueue = [],
 			args = slice.call( arguments ),
-			handlers = ( data_priv.get( this, "events" ) || {} )[ event.type ] || [],
+			handlers = ( dataPriv.get( this, "events" ) || {} )[ event.type ] || [],
 			special = jQuery.event.special[ event.type ] || {};
 
 		// Use the fix-ed jQuery.Event rather than the (read-only) native event
-		args[0] = event;
+		args[ 0 ] = event;
 		event.delegateTarget = this;
 
 		// Call the preDispatch hook for the mapped type, and let it bail if desired
@@ -12258,24 +18431,25 @@ jQuery.event = {
 
 		// Run delegates first; they may want to stop propagation beneath us
 		i = 0;
-		while ( (matched = handlerQueue[ i++ ]) && !event.isPropagationStopped() ) {
+		while ( ( matched = handlerQueue[ i++ ] ) && !event.isPropagationStopped() ) {
 			event.currentTarget = matched.elem;
 
 			j = 0;
-			while ( (handleObj = matched.handlers[ j++ ]) && !event.isImmediatePropagationStopped() ) {
+			while ( ( handleObj = matched.handlers[ j++ ] ) &&
+				!event.isImmediatePropagationStopped() ) {
 
-				// Triggered event must either 1) have no namespace, or
-				// 2) have namespace(s) a subset or equal to those in the bound event (both can have no namespace).
-				if ( !event.namespace_re || event.namespace_re.test( handleObj.namespace ) ) {
+				// Triggered event must either 1) have no namespace, or 2) have namespace(s)
+				// a subset or equal to those in the bound event (both can have no namespace).
+				if ( !event.rnamespace || event.rnamespace.test( handleObj.namespace ) ) {
 
 					event.handleObj = handleObj;
 					event.data = handleObj.data;
 
-					ret = ( (jQuery.event.special[ handleObj.origType ] || {}).handle || handleObj.handler )
-							.apply( matched.elem, args );
+					ret = ( ( jQuery.event.special[ handleObj.origType ] || {} ).handle ||
+						handleObj.handler ).apply( matched.elem, args );
 
 					if ( ret !== undefined ) {
-						if ( (event.result = ret) === false ) {
+						if ( ( event.result = ret ) === false ) {
 							event.preventDefault();
 							event.stopPropagation();
 						}
@@ -12298,15 +18472,20 @@ jQuery.event = {
 			delegateCount = handlers.delegateCount,
 			cur = event.target;
 
+		// Support (at least): Chrome, IE9
 		// Find delegate handlers
 		// Black-hole SVG <use> instance trees (#13180)
-		// Avoid non-left-click bubbling in Firefox (#3861)
-		if ( delegateCount && cur.nodeType && (!event.button || event.type !== "click") ) {
+		//
+		// Support: Firefox<=42+
+		// Avoid non-left-click in FF but don't block IE radio events (#3861, gh-2343)
+		if ( delegateCount && cur.nodeType &&
+			( event.type !== "click" || isNaN( event.button ) || event.button < 1 ) ) {
 
 			for ( ; cur !== this; cur = cur.parentNode || this ) {
 
+				// Don't check non-elements (#13208)
 				// Don't process clicks on disabled elements (#6911, #8165, #11382, #11764)
-				if ( cur.disabled !== true || event.type !== "click" ) {
+				if ( cur.nodeType === 1 && ( cur.disabled !== true || event.type !== "click" ) ) {
 					matches = [];
 					for ( i = 0; i < delegateCount; i++ ) {
 						handleObj = handlers[ i ];
@@ -12316,7 +18495,7 @@ jQuery.event = {
 
 						if ( matches[ sel ] === undefined ) {
 							matches[ sel ] = handleObj.needsContext ?
-								jQuery( sel, this ).index( cur ) >= 0 :
+								jQuery( sel, this ).index( cur ) > -1 :
 								jQuery.find( sel, this, null, [ cur ] ).length;
 						}
 						if ( matches[ sel ] ) {
@@ -12324,7 +18503,7 @@ jQuery.event = {
 						}
 					}
 					if ( matches.length ) {
-						handlerQueue.push({ elem: cur, handlers: matches });
+						handlerQueue.push( { elem: cur, handlers: matches } );
 					}
 				}
 			}
@@ -12332,19 +18511,20 @@ jQuery.event = {
 
 		// Add the remaining (directly-bound) handlers
 		if ( delegateCount < handlers.length ) {
-			handlerQueue.push({ elem: this, handlers: handlers.slice( delegateCount ) });
+			handlerQueue.push( { elem: this, handlers: handlers.slice( delegateCount ) } );
 		}
 
 		return handlerQueue;
 	},
 
 	// Includes some event props shared by KeyEvent and MouseEvent
-	props: "altKey bubbles cancelable ctrlKey currentTarget eventPhase metaKey relatedTarget shiftKey target timeStamp view which".split(" "),
+	props: ( "altKey bubbles cancelable ctrlKey currentTarget detail eventPhase " +
+		"metaKey relatedTarget shiftKey target timeStamp view which" ).split( " " ),
 
 	fixHooks: {},
 
 	keyHooks: {
-		props: "char charCode key keyCode".split(" "),
+		props: "char charCode key keyCode".split( " " ),
 		filter: function( event, original ) {
 
 			// Add which for key events
@@ -12357,7 +18537,8 @@ jQuery.event = {
 	},
 
 	mouseHooks: {
-		props: "button buttons clientX clientY offsetX offsetY pageX pageY screenX screenY toElement".split(" "),
+		props: ( "button buttons clientX clientY offsetX offsetY pageX pageY " +
+			"screenX screenY toElement" ).split( " " ),
 		filter: function( event, original ) {
 			var eventDoc, doc, body,
 				button = original.button;
@@ -12368,8 +18549,12 @@ jQuery.event = {
 				doc = eventDoc.documentElement;
 				body = eventDoc.body;
 
-				event.pageX = original.clientX + ( doc && doc.scrollLeft || body && body.scrollLeft || 0 ) - ( doc && doc.clientLeft || body && body.clientLeft || 0 );
-				event.pageY = original.clientY + ( doc && doc.scrollTop  || body && body.scrollTop  || 0 ) - ( doc && doc.clientTop  || body && body.clientTop  || 0 );
+				event.pageX = original.clientX +
+					( doc && doc.scrollLeft || body && body.scrollLeft || 0 ) -
+					( doc && doc.clientLeft || body && body.clientLeft || 0 );
+				event.pageY = original.clientY +
+					( doc && doc.scrollTop  || body && body.scrollTop  || 0 ) -
+					( doc && doc.clientTop  || body && body.clientTop  || 0 );
 			}
 
 			// Add which for click: 1 === left; 2 === middle; 3 === right
@@ -12415,7 +18600,7 @@ jQuery.event = {
 			event.target = document;
 		}
 
-		// Support: Safari 6.0+, Chrome < 28
+		// Support: Safari 6.0+, Chrome<28
 		// Target should not be a text node (#504, #13143)
 		if ( event.target.nodeType === 3 ) {
 			event.target = event.target.parentNode;
@@ -12426,10 +18611,12 @@ jQuery.event = {
 
 	special: {
 		load: {
+
 			// Prevent triggered image.load events from bubbling to window.load
 			noBubble: true
 		},
 		focus: {
+
 			// Fire native event if possible so blur/focus sequence is correct
 			trigger: function() {
 				if ( this !== safeActiveElement() && this.focus ) {
@@ -12449,6 +18636,7 @@ jQuery.event = {
 			delegateType: "focusout"
 		},
 		click: {
+
 			// For checkbox, fire native event so checked state will be right
 			trigger: function() {
 				if ( this.type === "checkbox" && this.click && jQuery.nodeName( this, "input" ) ) {
@@ -12473,41 +18661,21 @@ jQuery.event = {
 				}
 			}
 		}
-	},
-
-	simulate: function( type, elem, event, bubble ) {
-		// Piggyback on a donor event to simulate a different one.
-		// Fake originalEvent to avoid donor's stopPropagation, but if the
-		// simulated event prevents default then we do the same on the donor.
-		var e = jQuery.extend(
-			new jQuery.Event(),
-			event,
-			{
-				type: type,
-				isSimulated: true,
-				originalEvent: {}
-			}
-		);
-		if ( bubble ) {
-			jQuery.event.trigger( e, null, elem );
-		} else {
-			jQuery.event.dispatch.call( elem, e );
-		}
-		if ( e.isDefaultPrevented() ) {
-			event.preventDefault();
-		}
 	}
 };
 
 jQuery.removeEvent = function( elem, type, handle ) {
+
+	// This "if" is needed for plain objects
 	if ( elem.removeEventListener ) {
-		elem.removeEventListener( type, handle, false );
+		elem.removeEventListener( type, handle );
 	}
 };
 
 jQuery.Event = function( src, props ) {
+
 	// Allow instantiation without the 'new' keyword
-	if ( !(this instanceof jQuery.Event) ) {
+	if ( !( this instanceof jQuery.Event ) ) {
 		return new jQuery.Event( src, props );
 	}
 
@@ -12520,7 +18688,8 @@ jQuery.Event = function( src, props ) {
 		// by a handler lower down the tree; reflect the correct value.
 		this.isDefaultPrevented = src.defaultPrevented ||
 				src.defaultPrevented === undefined &&
-				// Support: Android < 4.0
+
+				// Support: Android<4.0
 				src.returnValue === false ?
 			returnTrue :
 			returnFalse;
@@ -12545,16 +18714,18 @@ jQuery.Event = function( src, props ) {
 // jQuery.Event is based on DOM3 Events as specified by the ECMAScript Language Binding
 // http://www.w3.org/TR/2003/WD-DOM-Level-3-Events-20030331/ecma-script-binding.html
 jQuery.Event.prototype = {
+	constructor: jQuery.Event,
 	isDefaultPrevented: returnFalse,
 	isPropagationStopped: returnFalse,
 	isImmediatePropagationStopped: returnFalse,
+	isSimulated: false,
 
 	preventDefault: function() {
 		var e = this.originalEvent;
 
 		this.isDefaultPrevented = returnTrue;
 
-		if ( e && e.preventDefault ) {
+		if ( e && !this.isSimulated ) {
 			e.preventDefault();
 		}
 	},
@@ -12563,7 +18734,7 @@ jQuery.Event.prototype = {
 
 		this.isPropagationStopped = returnTrue;
 
-		if ( e && e.stopPropagation ) {
+		if ( e && !this.isSimulated ) {
 			e.stopPropagation();
 		}
 	},
@@ -12572,7 +18743,7 @@ jQuery.Event.prototype = {
 
 		this.isImmediatePropagationStopped = returnTrue;
 
-		if ( e && e.stopImmediatePropagation ) {
+		if ( e && !this.isSimulated ) {
 			e.stopImmediatePropagation();
 		}
 
@@ -12581,8 +18752,14 @@ jQuery.Event.prototype = {
 };
 
 // Create mouseenter/leave events using mouseover/out and event-time checks
-// Support: Chrome 15+
-jQuery.each({
+// so that event delegation works in jQuery.
+// Do the same for pointerenter/pointerleave and pointerover/pointerout
+//
+// Support: Safari 7 only
+// Safari sends mouseenter too often; see:
+// https://code.google.com/p/chromium/issues/detail?id=470258
+// for the description of the bug (it existed in older Chrome versions as well).
+jQuery.each( {
 	mouseenter: "mouseover",
 	mouseleave: "mouseout",
 	pointerenter: "pointerover",
@@ -12598,9 +18775,9 @@ jQuery.each({
 				related = event.relatedTarget,
 				handleObj = event.handleObj;
 
-			// For mousenter/leave call the handler if related is outside the target.
+			// For mouseenter/leave call the handler if related is outside the target.
 			// NB: No relatedTarget if the mouse left/entered the browser window
-			if ( !related || (related !== target && !jQuery.contains( target, related )) ) {
+			if ( !related || ( related !== target && !jQuery.contains( target, related ) ) ) {
 				event.type = handleObj.origType;
 				ret = handleObj.handler.apply( this, arguments );
 				event.type = fix;
@@ -12608,115 +18785,32 @@ jQuery.each({
 			return ret;
 		}
 	};
-});
+} );
 
-// Create "bubbling" focus and blur events
-// Support: Firefox, Chrome, Safari
-if ( !support.focusinBubbles ) {
-	jQuery.each({ focus: "focusin", blur: "focusout" }, function( orig, fix ) {
-
-		// Attach a single capturing handler on the document while someone wants focusin/focusout
-		var handler = function( event ) {
-				jQuery.event.simulate( fix, event.target, jQuery.event.fix( event ), true );
-			};
-
-		jQuery.event.special[ fix ] = {
-			setup: function() {
-				var doc = this.ownerDocument || this,
-					attaches = data_priv.access( doc, fix );
-
-				if ( !attaches ) {
-					doc.addEventListener( orig, handler, true );
-				}
-				data_priv.access( doc, fix, ( attaches || 0 ) + 1 );
-			},
-			teardown: function() {
-				var doc = this.ownerDocument || this,
-					attaches = data_priv.access( doc, fix ) - 1;
-
-				if ( !attaches ) {
-					doc.removeEventListener( orig, handler, true );
-					data_priv.remove( doc, fix );
-
-				} else {
-					data_priv.access( doc, fix, attaches );
-				}
-			}
-		};
-	});
-}
-
-jQuery.fn.extend({
-
-	on: function( types, selector, data, fn, /*INTERNAL*/ one ) {
-		var origFn, type;
-
-		// Types can be a map of types/handlers
-		if ( typeof types === "object" ) {
-			// ( types-Object, selector, data )
-			if ( typeof selector !== "string" ) {
-				// ( types-Object, data )
-				data = data || selector;
-				selector = undefined;
-			}
-			for ( type in types ) {
-				this.on( type, selector, data, types[ type ], one );
-			}
-			return this;
-		}
-
-		if ( data == null && fn == null ) {
-			// ( types, fn )
-			fn = selector;
-			data = selector = undefined;
-		} else if ( fn == null ) {
-			if ( typeof selector === "string" ) {
-				// ( types, selector, fn )
-				fn = data;
-				data = undefined;
-			} else {
-				// ( types, data, fn )
-				fn = data;
-				data = selector;
-				selector = undefined;
-			}
-		}
-		if ( fn === false ) {
-			fn = returnFalse;
-		} else if ( !fn ) {
-			return this;
-		}
-
-		if ( one === 1 ) {
-			origFn = fn;
-			fn = function( event ) {
-				// Can use an empty set, since event contains the info
-				jQuery().off( event );
-				return origFn.apply( this, arguments );
-			};
-			// Use same guid so caller can remove using origFn
-			fn.guid = origFn.guid || ( origFn.guid = jQuery.guid++ );
-		}
-		return this.each( function() {
-			jQuery.event.add( this, types, fn, data, selector );
-		});
+jQuery.fn.extend( {
+	on: function( types, selector, data, fn ) {
+		return on( this, types, selector, data, fn );
 	},
 	one: function( types, selector, data, fn ) {
-		return this.on( types, selector, data, fn, 1 );
+		return on( this, types, selector, data, fn, 1 );
 	},
 	off: function( types, selector, fn ) {
 		var handleObj, type;
 		if ( types && types.preventDefault && types.handleObj ) {
+
 			// ( event )  dispatched jQuery.Event
 			handleObj = types.handleObj;
 			jQuery( types.delegateTarget ).off(
-				handleObj.namespace ? handleObj.origType + "." + handleObj.namespace : handleObj.origType,
+				handleObj.namespace ?
+					handleObj.origType + "." + handleObj.namespace :
+					handleObj.origType,
 				handleObj.selector,
 				handleObj.handler
 			);
 			return this;
 		}
 		if ( typeof types === "object" ) {
+
 			// ( types-object [, selector] )
 			for ( type in types ) {
 				this.off( type, selector, types[ type ] );
@@ -12724,6 +18818,7 @@ jQuery.fn.extend({
 			return this;
 		}
 		if ( selector === false || typeof selector === "function" ) {
+
 			// ( types [, fn] )
 			fn = selector;
 			selector = undefined;
@@ -12731,70 +18826,39 @@ jQuery.fn.extend({
 		if ( fn === false ) {
 			fn = returnFalse;
 		}
-		return this.each(function() {
+		return this.each( function() {
 			jQuery.event.remove( this, types, fn, selector );
-		});
-	},
-
-	trigger: function( type, data ) {
-		return this.each(function() {
-			jQuery.event.trigger( type, data, this );
-		});
-	},
-	triggerHandler: function( type, data ) {
-		var elem = this[0];
-		if ( elem ) {
-			return jQuery.event.trigger( type, data, elem, true );
-		}
+		} );
 	}
-});
+} );
 
 
 var
-	rxhtmlTag = /<(?!area|br|col|embed|hr|img|input|link|meta|param)(([\w:]+)[^>]*)\/>/gi,
-	rtagName = /<([\w:]+)/,
-	rhtml = /<|&#?\w+;/,
-	rnoInnerhtml = /<(?:script|style|link)/i,
+	rxhtmlTag = /<(?!area|br|col|embed|hr|img|input|link|meta|param)(([\w:-]+)[^>]*)\/>/gi,
+
+	// Support: IE 10-11, Edge 10240+
+	// In IE/Edge using regex groups here causes severe slowdowns.
+	// See https://connect.microsoft.com/IE/feedback/details/1736512/
+	rnoInnerhtml = /<script|<style|<link/i,
+
 	// checked="checked" or checked
 	rchecked = /checked\s*(?:[^=]|=\s*.checked.)/i,
-	rscriptType = /^$|\/(?:java|ecma)script/i,
 	rscriptTypeMasked = /^true\/(.*)/,
-	rcleanScript = /^\s*<!(?:\[CDATA\[|--)|(?:\]\]|--)>\s*$/g,
+	rcleanScript = /^\s*<!(?:\[CDATA\[|--)|(?:\]\]|--)>\s*$/g;
 
-	// We have to close these tags to support XHTML (#13200)
-	wrapMap = {
-
-		// Support: IE 9
-		option: [ 1, "<select multiple='multiple'>", "</select>" ],
-
-		thead: [ 1, "<table>", "</table>" ],
-		col: [ 2, "<table><colgroup>", "</colgroup></table>" ],
-		tr: [ 2, "<table><tbody>", "</tbody></table>" ],
-		td: [ 3, "<table><tbody><tr>", "</tr></tbody></table>" ],
-
-		_default: [ 0, "", "" ]
-	};
-
-// Support: IE 9
-wrapMap.optgroup = wrapMap.option;
-
-wrapMap.tbody = wrapMap.tfoot = wrapMap.colgroup = wrapMap.caption = wrapMap.thead;
-wrapMap.th = wrapMap.td;
-
-// Support: 1.x compatibility
 // Manipulating tables requires a tbody
 function manipulationTarget( elem, content ) {
 	return jQuery.nodeName( elem, "table" ) &&
 		jQuery.nodeName( content.nodeType !== 11 ? content : content.firstChild, "tr" ) ?
 
-		elem.getElementsByTagName("tbody")[0] ||
-			elem.appendChild( elem.ownerDocument.createElement("tbody") ) :
+		elem.getElementsByTagName( "tbody" )[ 0 ] ||
+			elem.appendChild( elem.ownerDocument.createElement( "tbody" ) ) :
 		elem;
 }
 
 // Replace/restore the type attribute of script elements for safe DOM manipulation
 function disableScript( elem ) {
-	elem.type = (elem.getAttribute("type") !== null) + "/" + elem.type;
+	elem.type = ( elem.getAttribute( "type" ) !== null ) + "/" + elem.type;
 	return elem;
 }
 function restoreScript( elem ) {
@@ -12803,22 +18867,10 @@ function restoreScript( elem ) {
 	if ( match ) {
 		elem.type = match[ 1 ];
 	} else {
-		elem.removeAttribute("type");
+		elem.removeAttribute( "type" );
 	}
 
 	return elem;
-}
-
-// Mark scripts as having already been evaluated
-function setGlobalEval( elems, refElements ) {
-	var i = 0,
-		l = elems.length;
-
-	for ( ; i < l; i++ ) {
-		data_priv.set(
-			elems[ i ], "globalEval", !refElements || data_priv.get( refElements[ i ], "globalEval" )
-		);
-	}
 }
 
 function cloneCopyEvent( src, dest ) {
@@ -12829,9 +18881,9 @@ function cloneCopyEvent( src, dest ) {
 	}
 
 	// 1. Copy private data: events, handlers, etc.
-	if ( data_priv.hasData( src ) ) {
-		pdataOld = data_priv.access( src );
-		pdataCur = data_priv.set( dest, pdataOld );
+	if ( dataPriv.hasData( src ) ) {
+		pdataOld = dataPriv.access( src );
+		pdataCur = dataPriv.set( dest, pdataOld );
 		events = pdataOld.events;
 
 		if ( events ) {
@@ -12847,25 +18899,15 @@ function cloneCopyEvent( src, dest ) {
 	}
 
 	// 2. Copy user data
-	if ( data_user.hasData( src ) ) {
-		udataOld = data_user.access( src );
+	if ( dataUser.hasData( src ) ) {
+		udataOld = dataUser.access( src );
 		udataCur = jQuery.extend( {}, udataOld );
 
-		data_user.set( dest, udataCur );
+		dataUser.set( dest, udataCur );
 	}
 }
 
-function getAll( context, tag ) {
-	var ret = context.getElementsByTagName ? context.getElementsByTagName( tag || "*" ) :
-			context.querySelectorAll ? context.querySelectorAll( tag || "*" ) :
-			[];
-
-	return tag === undefined || tag && jQuery.nodeName( context, tag ) ?
-		jQuery.merge( [ context ], ret ) :
-		ret;
-}
-
-// Support: IE >= 9
+// Fix IE bugs, see support tests
 function fixInput( src, dest ) {
 	var nodeName = dest.nodeName.toLowerCase();
 
@@ -12879,14 +18921,128 @@ function fixInput( src, dest ) {
 	}
 }
 
-jQuery.extend({
+function domManip( collection, args, callback, ignored ) {
+
+	// Flatten any nested arrays
+	args = concat.apply( [], args );
+
+	var fragment, first, scripts, hasScripts, node, doc,
+		i = 0,
+		l = collection.length,
+		iNoClone = l - 1,
+		value = args[ 0 ],
+		isFunction = jQuery.isFunction( value );
+
+	// We can't cloneNode fragments that contain checked, in WebKit
+	if ( isFunction ||
+			( l > 1 && typeof value === "string" &&
+				!support.checkClone && rchecked.test( value ) ) ) {
+		return collection.each( function( index ) {
+			var self = collection.eq( index );
+			if ( isFunction ) {
+				args[ 0 ] = value.call( this, index, self.html() );
+			}
+			domManip( self, args, callback, ignored );
+		} );
+	}
+
+	if ( l ) {
+		fragment = buildFragment( args, collection[ 0 ].ownerDocument, false, collection, ignored );
+		first = fragment.firstChild;
+
+		if ( fragment.childNodes.length === 1 ) {
+			fragment = first;
+		}
+
+		// Require either new content or an interest in ignored elements to invoke the callback
+		if ( first || ignored ) {
+			scripts = jQuery.map( getAll( fragment, "script" ), disableScript );
+			hasScripts = scripts.length;
+
+			// Use the original fragment for the last item
+			// instead of the first because it can end up
+			// being emptied incorrectly in certain situations (#8070).
+			for ( ; i < l; i++ ) {
+				node = fragment;
+
+				if ( i !== iNoClone ) {
+					node = jQuery.clone( node, true, true );
+
+					// Keep references to cloned scripts for later restoration
+					if ( hasScripts ) {
+
+						// Support: Android<4.1, PhantomJS<2
+						// push.apply(_, arraylike) throws on ancient WebKit
+						jQuery.merge( scripts, getAll( node, "script" ) );
+					}
+				}
+
+				callback.call( collection[ i ], node, i );
+			}
+
+			if ( hasScripts ) {
+				doc = scripts[ scripts.length - 1 ].ownerDocument;
+
+				// Reenable scripts
+				jQuery.map( scripts, restoreScript );
+
+				// Evaluate executable scripts on first document insertion
+				for ( i = 0; i < hasScripts; i++ ) {
+					node = scripts[ i ];
+					if ( rscriptType.test( node.type || "" ) &&
+						!dataPriv.access( node, "globalEval" ) &&
+						jQuery.contains( doc, node ) ) {
+
+						if ( node.src ) {
+
+							// Optional AJAX dependency, but won't run scripts if not present
+							if ( jQuery._evalUrl ) {
+								jQuery._evalUrl( node.src );
+							}
+						} else {
+							jQuery.globalEval( node.textContent.replace( rcleanScript, "" ) );
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return collection;
+}
+
+function remove( elem, selector, keepData ) {
+	var node,
+		nodes = selector ? jQuery.filter( selector, elem ) : elem,
+		i = 0;
+
+	for ( ; ( node = nodes[ i ] ) != null; i++ ) {
+		if ( !keepData && node.nodeType === 1 ) {
+			jQuery.cleanData( getAll( node ) );
+		}
+
+		if ( node.parentNode ) {
+			if ( keepData && jQuery.contains( node.ownerDocument, node ) ) {
+				setGlobalEval( getAll( node, "script" ) );
+			}
+			node.parentNode.removeChild( node );
+		}
+	}
+
+	return elem;
+}
+
+jQuery.extend( {
+	htmlPrefilter: function( html ) {
+		return html.replace( rxhtmlTag, "<$1></$2>" );
+	},
+
 	clone: function( elem, dataAndEvents, deepDataAndEvents ) {
 		var i, l, srcElements, destElements,
 			clone = elem.cloneNode( true ),
 			inPage = jQuery.contains( elem.ownerDocument, elem );
 
-		// Support: IE >= 9
-		// Fix Cloning issues
+		// Fix IE cloning issues
 		if ( !support.noCloneChecked && ( elem.nodeType === 1 || elem.nodeType === 11 ) &&
 				!jQuery.isXMLDoc( elem ) ) {
 
@@ -12923,103 +19079,14 @@ jQuery.extend({
 		return clone;
 	},
 
-	buildFragment: function( elems, context, scripts, selection ) {
-		var elem, tmp, tag, wrap, contains, j,
-			fragment = context.createDocumentFragment(),
-			nodes = [],
-			i = 0,
-			l = elems.length;
-
-		for ( ; i < l; i++ ) {
-			elem = elems[ i ];
-
-			if ( elem || elem === 0 ) {
-
-				// Add nodes directly
-				if ( jQuery.type( elem ) === "object" ) {
-					// Support: QtWebKit
-					// jQuery.merge because push.apply(_, arraylike) throws
-					jQuery.merge( nodes, elem.nodeType ? [ elem ] : elem );
-
-				// Convert non-html into a text node
-				} else if ( !rhtml.test( elem ) ) {
-					nodes.push( context.createTextNode( elem ) );
-
-				// Convert html into DOM nodes
-				} else {
-					tmp = tmp || fragment.appendChild( context.createElement("div") );
-
-					// Deserialize a standard representation
-					tag = ( rtagName.exec( elem ) || [ "", "" ] )[ 1 ].toLowerCase();
-					wrap = wrapMap[ tag ] || wrapMap._default;
-					tmp.innerHTML = wrap[ 1 ] + elem.replace( rxhtmlTag, "<$1></$2>" ) + wrap[ 2 ];
-
-					// Descend through wrappers to the right content
-					j = wrap[ 0 ];
-					while ( j-- ) {
-						tmp = tmp.lastChild;
-					}
-
-					// Support: QtWebKit
-					// jQuery.merge because push.apply(_, arraylike) throws
-					jQuery.merge( nodes, tmp.childNodes );
-
-					// Remember the top-level container
-					tmp = fragment.firstChild;
-
-					// Fixes #12346
-					// Support: Webkit, IE
-					tmp.textContent = "";
-				}
-			}
-		}
-
-		// Remove wrapper from fragment
-		fragment.textContent = "";
-
-		i = 0;
-		while ( (elem = nodes[ i++ ]) ) {
-
-			// #4087 - If origin and destination elements are the same, and this is
-			// that element, do not do anything
-			if ( selection && jQuery.inArray( elem, selection ) !== -1 ) {
-				continue;
-			}
-
-			contains = jQuery.contains( elem.ownerDocument, elem );
-
-			// Append to fragment
-			tmp = getAll( fragment.appendChild( elem ), "script" );
-
-			// Preserve script evaluation history
-			if ( contains ) {
-				setGlobalEval( tmp );
-			}
-
-			// Capture executables
-			if ( scripts ) {
-				j = 0;
-				while ( (elem = tmp[ j++ ]) ) {
-					if ( rscriptType.test( elem.type || "" ) ) {
-						scripts.push( elem );
-					}
-				}
-			}
-		}
-
-		return fragment;
-	},
-
 	cleanData: function( elems ) {
-		var data, elem, type, key,
+		var data, elem, type,
 			special = jQuery.event.special,
 			i = 0;
 
-		for ( ; (elem = elems[ i ]) !== undefined; i++ ) {
-			if ( jQuery.acceptData( elem ) ) {
-				key = elem[ data_priv.expando ];
-
-				if ( key && (data = data_priv.cache[ key ]) ) {
+		for ( ; ( elem = elems[ i ] ) !== undefined; i++ ) {
+			if ( acceptData( elem ) ) {
+				if ( ( data = elem[ dataPriv.expando ] ) ) {
 					if ( data.events ) {
 						for ( type in data.events ) {
 							if ( special[ type ] ) {
@@ -13031,91 +19098,86 @@ jQuery.extend({
 							}
 						}
 					}
-					if ( data_priv.cache[ key ] ) {
-						// Discard any remaining `private` data
-						delete data_priv.cache[ key ];
-					}
+
+					// Support: Chrome <= 35-45+
+					// Assign undefined instead of using delete, see Data#remove
+					elem[ dataPriv.expando ] = undefined;
+				}
+				if ( elem[ dataUser.expando ] ) {
+
+					// Support: Chrome <= 35-45+
+					// Assign undefined instead of using delete, see Data#remove
+					elem[ dataUser.expando ] = undefined;
 				}
 			}
-			// Discard any remaining `user` data
-			delete data_user.cache[ elem[ data_user.expando ] ];
 		}
 	}
-});
+} );
 
-jQuery.fn.extend({
+jQuery.fn.extend( {
+
+	// Keep domManip exposed until 3.0 (gh-2225)
+	domManip: domManip,
+
+	detach: function( selector ) {
+		return remove( this, selector, true );
+	},
+
+	remove: function( selector ) {
+		return remove( this, selector );
+	},
+
 	text: function( value ) {
 		return access( this, function( value ) {
 			return value === undefined ?
 				jQuery.text( this ) :
-				this.empty().each(function() {
+				this.empty().each( function() {
 					if ( this.nodeType === 1 || this.nodeType === 11 || this.nodeType === 9 ) {
 						this.textContent = value;
 					}
-				});
+				} );
 		}, null, value, arguments.length );
 	},
 
 	append: function() {
-		return this.domManip( arguments, function( elem ) {
+		return domManip( this, arguments, function( elem ) {
 			if ( this.nodeType === 1 || this.nodeType === 11 || this.nodeType === 9 ) {
 				var target = manipulationTarget( this, elem );
 				target.appendChild( elem );
 			}
-		});
+		} );
 	},
 
 	prepend: function() {
-		return this.domManip( arguments, function( elem ) {
+		return domManip( this, arguments, function( elem ) {
 			if ( this.nodeType === 1 || this.nodeType === 11 || this.nodeType === 9 ) {
 				var target = manipulationTarget( this, elem );
 				target.insertBefore( elem, target.firstChild );
 			}
-		});
+		} );
 	},
 
 	before: function() {
-		return this.domManip( arguments, function( elem ) {
+		return domManip( this, arguments, function( elem ) {
 			if ( this.parentNode ) {
 				this.parentNode.insertBefore( elem, this );
 			}
-		});
+		} );
 	},
 
 	after: function() {
-		return this.domManip( arguments, function( elem ) {
+		return domManip( this, arguments, function( elem ) {
 			if ( this.parentNode ) {
 				this.parentNode.insertBefore( elem, this.nextSibling );
 			}
-		});
-	},
-
-	remove: function( selector, keepData /* Internal Use Only */ ) {
-		var elem,
-			elems = selector ? jQuery.filter( selector, this ) : this,
-			i = 0;
-
-		for ( ; (elem = elems[i]) != null; i++ ) {
-			if ( !keepData && elem.nodeType === 1 ) {
-				jQuery.cleanData( getAll( elem ) );
-			}
-
-			if ( elem.parentNode ) {
-				if ( keepData && jQuery.contains( elem.ownerDocument, elem ) ) {
-					setGlobalEval( getAll( elem, "script" ) );
-				}
-				elem.parentNode.removeChild( elem );
-			}
-		}
-
-		return this;
+		} );
 	},
 
 	empty: function() {
 		var elem,
 			i = 0;
 
-		for ( ; (elem = this[i]) != null; i++ ) {
+		for ( ; ( elem = this[ i ] ) != null; i++ ) {
 			if ( elem.nodeType === 1 ) {
 
 				// Prevent memory leaks
@@ -13133,9 +19195,9 @@ jQuery.fn.extend({
 		dataAndEvents = dataAndEvents == null ? false : dataAndEvents;
 		deepDataAndEvents = deepDataAndEvents == null ? dataAndEvents : deepDataAndEvents;
 
-		return this.map(function() {
+		return this.map( function() {
 			return jQuery.clone( this, dataAndEvents, deepDataAndEvents );
-		});
+		} );
 	},
 
 	html: function( value ) {
@@ -13152,7 +19214,7 @@ jQuery.fn.extend({
 			if ( typeof value === "string" && !rnoInnerhtml.test( value ) &&
 				!wrapMap[ ( rtagName.exec( value ) || [ "", "" ] )[ 1 ].toLowerCase() ] ) {
 
-				value = value.replace( rxhtmlTag, "<$1></$2>" );
+				value = jQuery.htmlPrefilter( value );
 
 				try {
 					for ( ; i < l; i++ ) {
@@ -13168,7 +19230,7 @@ jQuery.fn.extend({
 					elem = 0;
 
 				// If using innerHTML throws an exception, use the fallback method
-				} catch( e ) {}
+				} catch ( e ) {}
 			}
 
 			if ( elem ) {
@@ -13178,115 +19240,25 @@ jQuery.fn.extend({
 	},
 
 	replaceWith: function() {
-		var arg = arguments[ 0 ];
+		var ignored = [];
 
-		// Make the changes, replacing each context element with the new content
-		this.domManip( arguments, function( elem ) {
-			arg = this.parentNode;
+		// Make the changes, replacing each non-ignored context element with the new content
+		return domManip( this, arguments, function( elem ) {
+			var parent = this.parentNode;
 
-			jQuery.cleanData( getAll( this ) );
-
-			if ( arg ) {
-				arg.replaceChild( elem, this );
-			}
-		});
-
-		// Force removal if there was no new content (e.g., from empty arguments)
-		return arg && (arg.length || arg.nodeType) ? this : this.remove();
-	},
-
-	detach: function( selector ) {
-		return this.remove( selector, true );
-	},
-
-	domManip: function( args, callback ) {
-
-		// Flatten any nested arrays
-		args = concat.apply( [], args );
-
-		var fragment, first, scripts, hasScripts, node, doc,
-			i = 0,
-			l = this.length,
-			set = this,
-			iNoClone = l - 1,
-			value = args[ 0 ],
-			isFunction = jQuery.isFunction( value );
-
-		// We can't cloneNode fragments that contain checked, in WebKit
-		if ( isFunction ||
-				( l > 1 && typeof value === "string" &&
-					!support.checkClone && rchecked.test( value ) ) ) {
-			return this.each(function( index ) {
-				var self = set.eq( index );
-				if ( isFunction ) {
-					args[ 0 ] = value.call( this, index, self.html() );
-				}
-				self.domManip( args, callback );
-			});
-		}
-
-		if ( l ) {
-			fragment = jQuery.buildFragment( args, this[ 0 ].ownerDocument, false, this );
-			first = fragment.firstChild;
-
-			if ( fragment.childNodes.length === 1 ) {
-				fragment = first;
-			}
-
-			if ( first ) {
-				scripts = jQuery.map( getAll( fragment, "script" ), disableScript );
-				hasScripts = scripts.length;
-
-				// Use the original fragment for the last item instead of the first because it can end up
-				// being emptied incorrectly in certain situations (#8070).
-				for ( ; i < l; i++ ) {
-					node = fragment;
-
-					if ( i !== iNoClone ) {
-						node = jQuery.clone( node, true, true );
-
-						// Keep references to cloned scripts for later restoration
-						if ( hasScripts ) {
-							// Support: QtWebKit
-							// jQuery.merge because push.apply(_, arraylike) throws
-							jQuery.merge( scripts, getAll( node, "script" ) );
-						}
-					}
-
-					callback.call( this[ i ], node, i );
-				}
-
-				if ( hasScripts ) {
-					doc = scripts[ scripts.length - 1 ].ownerDocument;
-
-					// Reenable scripts
-					jQuery.map( scripts, restoreScript );
-
-					// Evaluate executable scripts on first document insertion
-					for ( i = 0; i < hasScripts; i++ ) {
-						node = scripts[ i ];
-						if ( rscriptType.test( node.type || "" ) &&
-							!data_priv.access( node, "globalEval" ) && jQuery.contains( doc, node ) ) {
-
-							if ( node.src ) {
-								// Optional AJAX dependency, but won't run scripts if not present
-								if ( jQuery._evalUrl ) {
-									jQuery._evalUrl( node.src );
-								}
-							} else {
-								jQuery.globalEval( node.textContent.replace( rcleanScript, "" ) );
-							}
-						}
-					}
+			if ( jQuery.inArray( this, ignored ) < 0 ) {
+				jQuery.cleanData( getAll( this ) );
+				if ( parent ) {
+					parent.replaceChild( elem, this );
 				}
 			}
-		}
 
-		return this;
+		// Force callback invocation
+		}, ignored );
 	}
-});
+} );
 
-jQuery.each({
+jQuery.each( {
 	appendTo: "append",
 	prependTo: "prepend",
 	insertBefore: "before",
@@ -13311,28 +19283,29 @@ jQuery.each({
 
 		return this.pushStack( ret );
 	};
-});
+} );
 
 
 var iframe,
-	elemdisplay = {};
+	elemdisplay = {
+
+		// Support: Firefox
+		// We have to pre-define these values for FF (#10227)
+		HTML: "block",
+		BODY: "block"
+	};
 
 /**
  * Retrieve the actual display of a element
  * @param {String} name nodeName of the element
  * @param {Object} doc Document object
  */
+
 // Called only from within defaultDisplay
 function actualDisplay( name, doc ) {
-	var style,
-		elem = jQuery( doc.createElement( name ) ).appendTo( doc.body ),
+	var elem = jQuery( doc.createElement( name ) ).appendTo( doc.body ),
 
-		// getDefaultComputedStyle might be reliably used only on attached element
-		display = window.getDefaultComputedStyle && ( style = window.getDefaultComputedStyle( elem[ 0 ] ) ) ?
-
-			// Use of this method is a temporary fix (more like optmization) until something better comes along,
-			// since it was removed from specification and supported only in FF
-			style.display : jQuery.css( elem[ 0 ], "display" );
+		display = jQuery.css( elem[ 0 ], "display" );
 
 	// We don't have any data stored on the element,
 	// so use "detach" method as fast way to get rid of the element
@@ -13356,7 +19329,8 @@ function defaultDisplay( nodeName ) {
 		if ( display === "none" || !display ) {
 
 			// Use the already-created iframe if possible
-			iframe = (iframe || jQuery( "<iframe frameborder='0' width='0' height='0'/>" )).appendTo( doc.documentElement );
+			iframe = ( iframe || jQuery( "<iframe frameborder='0' width='0' height='0'/>" ) )
+				.appendTo( doc.documentElement );
 
 			// Always write a new HTML skeleton so Webkit and Firefox don't choke on reuse
 			doc = iframe[ 0 ].contentDocument;
@@ -13375,170 +19349,25 @@ function defaultDisplay( nodeName ) {
 
 	return display;
 }
-var rmargin = (/^margin/);
+var rmargin = ( /^margin/ );
 
 var rnumnonpx = new RegExp( "^(" + pnum + ")(?!px)[a-z%]+$", "i" );
 
 var getStyles = function( elem ) {
-		return elem.ownerDocument.defaultView.getComputedStyle( elem, null );
+
+		// Support: IE<=11+, Firefox<=30+ (#15098, #14150)
+		// IE throws on elements created in popups
+		// FF meanwhile throws on frame elements through "defaultView.getComputedStyle"
+		var view = elem.ownerDocument.defaultView;
+
+		if ( !view || !view.opener ) {
+			view = window;
+		}
+
+		return view.getComputedStyle( elem );
 	};
 
-
-
-function curCSS( elem, name, computed ) {
-	var width, minWidth, maxWidth, ret,
-		style = elem.style;
-
-	computed = computed || getStyles( elem );
-
-	// Support: IE9
-	// getPropertyValue is only needed for .css('filter') in IE9, see #12537
-	if ( computed ) {
-		ret = computed.getPropertyValue( name ) || computed[ name ];
-	}
-
-	if ( computed ) {
-
-		if ( ret === "" && !jQuery.contains( elem.ownerDocument, elem ) ) {
-			ret = jQuery.style( elem, name );
-		}
-
-		// Support: iOS < 6
-		// A tribute to the "awesome hack by Dean Edwards"
-		// iOS < 6 (at least) returns percentage for a larger set of values, but width seems to be reliably pixels
-		// this is against the CSSOM draft spec: http://dev.w3.org/csswg/cssom/#resolved-values
-		if ( rnumnonpx.test( ret ) && rmargin.test( name ) ) {
-
-			// Remember the original values
-			width = style.width;
-			minWidth = style.minWidth;
-			maxWidth = style.maxWidth;
-
-			// Put in the new values to get a computed value out
-			style.minWidth = style.maxWidth = style.width = ret;
-			ret = computed.width;
-
-			// Revert the changed values
-			style.width = width;
-			style.minWidth = minWidth;
-			style.maxWidth = maxWidth;
-		}
-	}
-
-	return ret !== undefined ?
-		// Support: IE
-		// IE returns zIndex value as an integer.
-		ret + "" :
-		ret;
-}
-
-
-function addGetHookIf( conditionFn, hookFn ) {
-	// Define the hook, we'll check on the first run if it's really needed.
-	return {
-		get: function() {
-			if ( conditionFn() ) {
-				// Hook not needed (or it's not possible to use it due to missing dependency),
-				// remove it.
-				// Since there are no other hooks for marginRight, remove the whole object.
-				delete this.get;
-				return;
-			}
-
-			// Hook needed; redefine it so that the support test is not executed again.
-
-			return (this.get = hookFn).apply( this, arguments );
-		}
-	};
-}
-
-
-(function() {
-	var pixelPositionVal, boxSizingReliableVal,
-		docElem = document.documentElement,
-		container = document.createElement( "div" ),
-		div = document.createElement( "div" );
-
-	if ( !div.style ) {
-		return;
-	}
-
-	div.style.backgroundClip = "content-box";
-	div.cloneNode( true ).style.backgroundClip = "";
-	support.clearCloneStyle = div.style.backgroundClip === "content-box";
-
-	container.style.cssText = "border:0;width:0;height:0;top:0;left:-9999px;margin-top:1px;" +
-		"position:absolute";
-	container.appendChild( div );
-
-	// Executing both pixelPosition & boxSizingReliable tests require only one layout
-	// so they're executed at the same time to save the second computation.
-	function computePixelPositionAndBoxSizingReliable() {
-		div.style.cssText =
-			// Support: Firefox<29, Android 2.3
-			// Vendor-prefix box-sizing
-			"-webkit-box-sizing:border-box;-moz-box-sizing:border-box;" +
-			"box-sizing:border-box;display:block;margin-top:1%;top:1%;" +
-			"border:1px;padding:1px;width:4px;position:absolute";
-		div.innerHTML = "";
-		docElem.appendChild( container );
-
-		var divStyle = window.getComputedStyle( div, null );
-		pixelPositionVal = divStyle.top !== "1%";
-		boxSizingReliableVal = divStyle.width === "4px";
-
-		docElem.removeChild( container );
-	}
-
-	// Support: node.js jsdom
-	// Don't assume that getComputedStyle is a property of the global object
-	if ( window.getComputedStyle ) {
-		jQuery.extend( support, {
-			pixelPosition: function() {
-				// This test is executed only once but we still do memoizing
-				// since we can use the boxSizingReliable pre-computing.
-				// No need to check if the test was already performed, though.
-				computePixelPositionAndBoxSizingReliable();
-				return pixelPositionVal;
-			},
-			boxSizingReliable: function() {
-				if ( boxSizingReliableVal == null ) {
-					computePixelPositionAndBoxSizingReliable();
-				}
-				return boxSizingReliableVal;
-			},
-			reliableMarginRight: function() {
-				// Support: Android 2.3
-				// Check if div with explicit width and no margin-right incorrectly
-				// gets computed margin-right based on width of container. (#3333)
-				// WebKit Bug 13343 - getComputedStyle returns wrong value for margin-right
-				// This support function is only executed once so no memoizing is needed.
-				var ret,
-					marginDiv = div.appendChild( document.createElement( "div" ) );
-
-				// Reset CSS: box-sizing; display; margin; border; padding
-				marginDiv.style.cssText = div.style.cssText =
-					// Support: Firefox<29, Android 2.3
-					// Vendor-prefix box-sizing
-					"-webkit-box-sizing:content-box;-moz-box-sizing:content-box;" +
-					"box-sizing:content-box;display:block;margin:0;border:0;padding:0";
-				marginDiv.style.marginRight = marginDiv.style.width = "0";
-				div.style.width = "1px";
-				docElem.appendChild( container );
-
-				ret = !parseFloat( window.getComputedStyle( marginDiv, null ).marginRight );
-
-				docElem.removeChild( container );
-
-				return ret;
-			}
-		});
-	}
-})();
-
-
-// A method for quickly swapping in/out CSS properties to get correct calculations.
-jQuery.swap = function( elem, options, callback, args ) {
+var swap = function( elem, options, callback, args ) {
 	var ret, name,
 		old = {};
 
@@ -13559,12 +19388,198 @@ jQuery.swap = function( elem, options, callback, args ) {
 };
 
 
+var documentElement = document.documentElement;
+
+
+
+( function() {
+	var pixelPositionVal, boxSizingReliableVal, pixelMarginRightVal, reliableMarginLeftVal,
+		container = document.createElement( "div" ),
+		div = document.createElement( "div" );
+
+	// Finish early in limited (non-browser) environments
+	if ( !div.style ) {
+		return;
+	}
+
+	// Support: IE9-11+
+	// Style of cloned element affects source element cloned (#8908)
+	div.style.backgroundClip = "content-box";
+	div.cloneNode( true ).style.backgroundClip = "";
+	support.clearCloneStyle = div.style.backgroundClip === "content-box";
+
+	container.style.cssText = "border:0;width:8px;height:0;top:0;left:-9999px;" +
+		"padding:0;margin-top:1px;position:absolute";
+	container.appendChild( div );
+
+	// Executing both pixelPosition & boxSizingReliable tests require only one layout
+	// so they're executed at the same time to save the second computation.
+	function computeStyleTests() {
+		div.style.cssText =
+
+			// Support: Firefox<29, Android 2.3
+			// Vendor-prefix box-sizing
+			"-webkit-box-sizing:border-box;-moz-box-sizing:border-box;box-sizing:border-box;" +
+			"position:relative;display:block;" +
+			"margin:auto;border:1px;padding:1px;" +
+			"top:1%;width:50%";
+		div.innerHTML = "";
+		documentElement.appendChild( container );
+
+		var divStyle = window.getComputedStyle( div );
+		pixelPositionVal = divStyle.top !== "1%";
+		reliableMarginLeftVal = divStyle.marginLeft === "2px";
+		boxSizingReliableVal = divStyle.width === "4px";
+
+		// Support: Android 4.0 - 4.3 only
+		// Some styles come back with percentage values, even though they shouldn't
+		div.style.marginRight = "50%";
+		pixelMarginRightVal = divStyle.marginRight === "4px";
+
+		documentElement.removeChild( container );
+	}
+
+	jQuery.extend( support, {
+		pixelPosition: function() {
+
+			// This test is executed only once but we still do memoizing
+			// since we can use the boxSizingReliable pre-computing.
+			// No need to check if the test was already performed, though.
+			computeStyleTests();
+			return pixelPositionVal;
+		},
+		boxSizingReliable: function() {
+			if ( boxSizingReliableVal == null ) {
+				computeStyleTests();
+			}
+			return boxSizingReliableVal;
+		},
+		pixelMarginRight: function() {
+
+			// Support: Android 4.0-4.3
+			// We're checking for boxSizingReliableVal here instead of pixelMarginRightVal
+			// since that compresses better and they're computed together anyway.
+			if ( boxSizingReliableVal == null ) {
+				computeStyleTests();
+			}
+			return pixelMarginRightVal;
+		},
+		reliableMarginLeft: function() {
+
+			// Support: IE <=8 only, Android 4.0 - 4.3 only, Firefox <=3 - 37
+			if ( boxSizingReliableVal == null ) {
+				computeStyleTests();
+			}
+			return reliableMarginLeftVal;
+		},
+		reliableMarginRight: function() {
+
+			// Support: Android 2.3
+			// Check if div with explicit width and no margin-right incorrectly
+			// gets computed margin-right based on width of container. (#3333)
+			// WebKit Bug 13343 - getComputedStyle returns wrong value for margin-right
+			// This support function is only executed once so no memoizing is needed.
+			var ret,
+				marginDiv = div.appendChild( document.createElement( "div" ) );
+
+			// Reset CSS: box-sizing; display; margin; border; padding
+			marginDiv.style.cssText = div.style.cssText =
+
+				// Support: Android 2.3
+				// Vendor-prefix box-sizing
+				"-webkit-box-sizing:content-box;box-sizing:content-box;" +
+				"display:block;margin:0;border:0;padding:0";
+			marginDiv.style.marginRight = marginDiv.style.width = "0";
+			div.style.width = "1px";
+			documentElement.appendChild( container );
+
+			ret = !parseFloat( window.getComputedStyle( marginDiv ).marginRight );
+
+			documentElement.removeChild( container );
+			div.removeChild( marginDiv );
+
+			return ret;
+		}
+	} );
+} )();
+
+
+function curCSS( elem, name, computed ) {
+	var width, minWidth, maxWidth, ret,
+		style = elem.style;
+
+	computed = computed || getStyles( elem );
+	ret = computed ? computed.getPropertyValue( name ) || computed[ name ] : undefined;
+
+	// Support: Opera 12.1x only
+	// Fall back to style even without computed
+	// computed is undefined for elems on document fragments
+	if ( ( ret === "" || ret === undefined ) && !jQuery.contains( elem.ownerDocument, elem ) ) {
+		ret = jQuery.style( elem, name );
+	}
+
+	// Support: IE9
+	// getPropertyValue is only needed for .css('filter') (#12537)
+	if ( computed ) {
+
+		// A tribute to the "awesome hack by Dean Edwards"
+		// Android Browser returns percentage for some values,
+		// but width seems to be reliably pixels.
+		// This is against the CSSOM draft spec:
+		// http://dev.w3.org/csswg/cssom/#resolved-values
+		if ( !support.pixelMarginRight() && rnumnonpx.test( ret ) && rmargin.test( name ) ) {
+
+			// Remember the original values
+			width = style.width;
+			minWidth = style.minWidth;
+			maxWidth = style.maxWidth;
+
+			// Put in the new values to get a computed value out
+			style.minWidth = style.maxWidth = style.width = ret;
+			ret = computed.width;
+
+			// Revert the changed values
+			style.width = width;
+			style.minWidth = minWidth;
+			style.maxWidth = maxWidth;
+		}
+	}
+
+	return ret !== undefined ?
+
+		// Support: IE9-11+
+		// IE returns zIndex value as an integer.
+		ret + "" :
+		ret;
+}
+
+
+function addGetHookIf( conditionFn, hookFn ) {
+
+	// Define the hook, we'll check on the first run if it's really needed.
+	return {
+		get: function() {
+			if ( conditionFn() ) {
+
+				// Hook not needed (or it's not possible to use it due
+				// to missing dependency), remove it.
+				delete this.get;
+				return;
+			}
+
+			// Hook needed; redefine it so that the support test is not executed again.
+			return ( this.get = hookFn ).apply( this, arguments );
+		}
+	};
+}
+
+
 var
-	// swappable if display is none or starts with table except "table", "table-cell", or "table-caption"
-	// see here for display values: https://developer.mozilla.org/en-US/docs/CSS/display
+
+	// Swappable if display is none or starts with table
+	// except "table", "table-cell", or "table-caption"
+	// See here for display values: https://developer.mozilla.org/en-US/docs/CSS/display
 	rdisplayswap = /^(none|table(?!-c[ea]).+)/,
-	rnumsplit = new RegExp( "^(" + pnum + ")(.*)$", "i" ),
-	rrelNum = new RegExp( "^([+-])=(" + pnum + ")", "i" ),
 
 	cssShow = { position: "absolute", visibility: "hidden", display: "block" },
 	cssNormalTransform = {
@@ -13572,69 +19587,76 @@ var
 		fontWeight: "400"
 	},
 
-	cssPrefixes = [ "Webkit", "O", "Moz", "ms" ];
+	cssPrefixes = [ "Webkit", "O", "Moz", "ms" ],
+	emptyStyle = document.createElement( "div" ).style;
 
-// return a css property mapped to a potentially vendor prefixed property
-function vendorPropName( style, name ) {
+// Return a css property mapped to a potentially vendor prefixed property
+function vendorPropName( name ) {
 
-	// shortcut for names that are not vendor prefixed
-	if ( name in style ) {
+	// Shortcut for names that are not vendor prefixed
+	if ( name in emptyStyle ) {
 		return name;
 	}
 
-	// check for vendor prefixed names
-	var capName = name[0].toUpperCase() + name.slice(1),
-		origName = name,
+	// Check for vendor prefixed names
+	var capName = name[ 0 ].toUpperCase() + name.slice( 1 ),
 		i = cssPrefixes.length;
 
 	while ( i-- ) {
 		name = cssPrefixes[ i ] + capName;
-		if ( name in style ) {
+		if ( name in emptyStyle ) {
 			return name;
 		}
 	}
-
-	return origName;
 }
 
 function setPositiveNumber( elem, value, subtract ) {
-	var matches = rnumsplit.exec( value );
+
+	// Any relative (+/-) values have already been
+	// normalized at this point
+	var matches = rcssNum.exec( value );
 	return matches ?
+
 		// Guard against undefined "subtract", e.g., when used as in cssHooks
-		Math.max( 0, matches[ 1 ] - ( subtract || 0 ) ) + ( matches[ 2 ] || "px" ) :
+		Math.max( 0, matches[ 2 ] - ( subtract || 0 ) ) + ( matches[ 3 ] || "px" ) :
 		value;
 }
 
 function augmentWidthOrHeight( elem, name, extra, isBorderBox, styles ) {
 	var i = extra === ( isBorderBox ? "border" : "content" ) ?
+
 		// If we already have the right measurement, avoid augmentation
 		4 :
+
 		// Otherwise initialize for horizontal or vertical properties
 		name === "width" ? 1 : 0,
 
 		val = 0;
 
 	for ( ; i < 4; i += 2 ) {
-		// both box models exclude margin, so add it if we want it
+
+		// Both box models exclude margin, so add it if we want it
 		if ( extra === "margin" ) {
 			val += jQuery.css( elem, extra + cssExpand[ i ], true, styles );
 		}
 
 		if ( isBorderBox ) {
+
 			// border-box includes padding, so remove it if we want content
 			if ( extra === "content" ) {
 				val -= jQuery.css( elem, "padding" + cssExpand[ i ], true, styles );
 			}
 
-			// at this point, extra isn't border nor margin, so remove border
+			// At this point, extra isn't border nor margin, so remove border
 			if ( extra !== "margin" ) {
 				val -= jQuery.css( elem, "border" + cssExpand[ i ] + "Width", true, styles );
 			}
 		} else {
-			// at this point, extra isn't content, so add padding
+
+			// At this point, extra isn't content, so add padding
 			val += jQuery.css( elem, "padding" + cssExpand[ i ], true, styles );
 
-			// at this point, extra isn't content nor padding, so add border
+			// At this point, extra isn't content nor padding, so add border
 			if ( extra !== "padding" ) {
 				val += jQuery.css( elem, "border" + cssExpand[ i ] + "Width", true, styles );
 			}
@@ -13652,10 +19674,11 @@ function getWidthOrHeight( elem, name, extra ) {
 		styles = getStyles( elem ),
 		isBorderBox = jQuery.css( elem, "boxSizing", false, styles ) === "border-box";
 
-	// some non-html elements return undefined for offsetWidth, so check for null/undefined
+	// Some non-html elements return undefined for offsetWidth, so check for null/undefined
 	// svg - https://bugzilla.mozilla.org/show_bug.cgi?id=649285
 	// MathML - https://bugzilla.mozilla.org/show_bug.cgi?id=491668
 	if ( val <= 0 || val == null ) {
+
 		// Fall back to computed then uncomputed css if necessary
 		val = curCSS( elem, name, styles );
 		if ( val < 0 || val == null ) {
@@ -13663,11 +19686,11 @@ function getWidthOrHeight( elem, name, extra ) {
 		}
 
 		// Computed unit is not pixels. Stop here and return.
-		if ( rnumnonpx.test(val) ) {
+		if ( rnumnonpx.test( val ) ) {
 			return val;
 		}
 
-		// we need the check for style in case a browser which returns unreliable values
+		// Check for style in case a browser which returns unreliable values
 		// for getComputedStyle silently falls back to the reliable elem.style
 		valueIsBorderBox = isBorderBox &&
 			( support.boxSizingReliable() || val === elem.style[ name ] );
@@ -13676,7 +19699,7 @@ function getWidthOrHeight( elem, name, extra ) {
 		val = parseFloat( val ) || 0;
 	}
 
-	// use the active box-sizing model to add/subtract irrelevant styles
+	// Use the active box-sizing model to add/subtract irrelevant styles
 	return ( val +
 		augmentWidthOrHeight(
 			elem,
@@ -13700,9 +19723,10 @@ function showHide( elements, show ) {
 			continue;
 		}
 
-		values[ index ] = data_priv.get( elem, "olddisplay" );
+		values[ index ] = dataPriv.get( elem, "olddisplay" );
 		display = elem.style.display;
 		if ( show ) {
+
 			// Reset the inline display of this element to learn if it is
 			// being hidden by cascaded rules or not
 			if ( !values[ index ] && display === "none" ) {
@@ -13713,13 +19737,21 @@ function showHide( elements, show ) {
 			// in a stylesheet to whatever the default browser style is
 			// for such an element
 			if ( elem.style.display === "" && isHidden( elem ) ) {
-				values[ index ] = data_priv.access( elem, "olddisplay", defaultDisplay(elem.nodeName) );
+				values[ index ] = dataPriv.access(
+					elem,
+					"olddisplay",
+					defaultDisplay( elem.nodeName )
+				);
 			}
 		} else {
 			hidden = isHidden( elem );
 
 			if ( display !== "none" || !hidden ) {
-				data_priv.set( elem, "olddisplay", hidden ? display : jQuery.css( elem, "display" ) );
+				dataPriv.set(
+					elem,
+					"olddisplay",
+					hidden ? display : jQuery.css( elem, "display" )
+				);
 			}
 		}
 	}
@@ -13739,13 +19771,15 @@ function showHide( elements, show ) {
 	return elements;
 }
 
-jQuery.extend({
+jQuery.extend( {
+
 	// Add in style property hooks for overriding the default
 	// behavior of getting and setting a style property
 	cssHooks: {
 		opacity: {
 			get: function( elem, computed ) {
 				if ( computed ) {
+
 					// We should always get a number back from opacity
 					var ret = curCSS( elem, "opacity" );
 					return ret === "" ? "1" : ret;
@@ -13756,6 +19790,7 @@ jQuery.extend({
 
 	// Don't automatically add "px" to these possibly-unitless properties
 	cssNumber: {
+		"animationIterationCount": true,
 		"columnCount": true,
 		"fillOpacity": true,
 		"flexGrow": true,
@@ -13773,12 +19808,12 @@ jQuery.extend({
 	// Add in properties whose names you wish to fix before
 	// setting or getting the value
 	cssProps: {
-		// normalize float css property
 		"float": "cssFloat"
 	},
 
 	// Get and set the style property on a DOM Node
 	style: function( elem, name, value, extra ) {
+
 		// Don't set styles on text and comment nodes
 		if ( !elem || elem.nodeType === 3 || elem.nodeType === 8 || !elem.style ) {
 			return;
@@ -13789,47 +19824,53 @@ jQuery.extend({
 			origName = jQuery.camelCase( name ),
 			style = elem.style;
 
-		name = jQuery.cssProps[ origName ] || ( jQuery.cssProps[ origName ] = vendorPropName( style, origName ) );
+		name = jQuery.cssProps[ origName ] ||
+			( jQuery.cssProps[ origName ] = vendorPropName( origName ) || origName );
 
-		// gets hook for the prefixed version
-		// followed by the unprefixed version
+		// Gets hook for the prefixed version, then unprefixed version
 		hooks = jQuery.cssHooks[ name ] || jQuery.cssHooks[ origName ];
 
 		// Check if we're setting a value
 		if ( value !== undefined ) {
 			type = typeof value;
 
-			// convert relative number strings (+= or -=) to relative numbers. #7345
-			if ( type === "string" && (ret = rrelNum.exec( value )) ) {
-				value = ( ret[1] + 1 ) * ret[2] + parseFloat( jQuery.css( elem, name ) );
+			// Convert "+=" or "-=" to relative numbers (#7345)
+			if ( type === "string" && ( ret = rcssNum.exec( value ) ) && ret[ 1 ] ) {
+				value = adjustCSS( elem, name, ret );
+
 				// Fixes bug #9237
 				type = "number";
 			}
 
-			// Make sure that null and NaN values aren't set. See: #7116
+			// Make sure that null and NaN values aren't set (#7116)
 			if ( value == null || value !== value ) {
 				return;
 			}
 
-			// If a number was passed in, add 'px' to the (except for certain CSS properties)
-			if ( type === "number" && !jQuery.cssNumber[ origName ] ) {
-				value += "px";
+			// If a number was passed in, add the unit (except for certain CSS properties)
+			if ( type === "number" ) {
+				value += ret && ret[ 3 ] || ( jQuery.cssNumber[ origName ] ? "" : "px" );
 			}
 
-			// Fixes #8908, it can be done more correctly by specifying setters in cssHooks,
-			// but it would mean to define eight (for every problematic property) identical functions
+			// Support: IE9-11+
+			// background-* props affect original clone's values
 			if ( !support.clearCloneStyle && value === "" && name.indexOf( "background" ) === 0 ) {
 				style[ name ] = "inherit";
 			}
 
 			// If a hook was provided, use that value, otherwise just set the specified value
-			if ( !hooks || !("set" in hooks) || (value = hooks.set( elem, value, extra )) !== undefined ) {
+			if ( !hooks || !( "set" in hooks ) ||
+				( value = hooks.set( elem, value, extra ) ) !== undefined ) {
+
 				style[ name ] = value;
 			}
 
 		} else {
+
 			// If a hook was provided get the non-computed value from there
-			if ( hooks && "get" in hooks && (ret = hooks.get( elem, false, extra )) !== undefined ) {
+			if ( hooks && "get" in hooks &&
+				( ret = hooks.get( elem, false, extra ) ) !== undefined ) {
+
 				return ret;
 			}
 
@@ -13843,10 +19884,10 @@ jQuery.extend({
 			origName = jQuery.camelCase( name );
 
 		// Make sure that we're working with the right name
-		name = jQuery.cssProps[ origName ] || ( jQuery.cssProps[ origName ] = vendorPropName( elem.style, origName ) );
+		name = jQuery.cssProps[ origName ] ||
+			( jQuery.cssProps[ origName ] = vendorPropName( origName ) || origName );
 
-		// gets hook for the prefixed version
-		// followed by the unprefixed version
+		// Try prefixed name followed by the unprefixed name
 		hooks = jQuery.cssHooks[ name ] || jQuery.cssHooks[ origName ];
 
 		// If a hook was provided get the computed value from there
@@ -13859,63 +19900,85 @@ jQuery.extend({
 			val = curCSS( elem, name, styles );
 		}
 
-		//convert "normal" to computed value
+		// Convert "normal" to computed value
 		if ( val === "normal" && name in cssNormalTransform ) {
 			val = cssNormalTransform[ name ];
 		}
 
-		// Return, converting to number if forced or a qualifier was provided and val looks numeric
+		// Make numeric if forced or a qualifier was provided and val looks numeric
 		if ( extra === "" || extra ) {
 			num = parseFloat( val );
-			return extra === true || jQuery.isNumeric( num ) ? num || 0 : val;
+			return extra === true || isFinite( num ) ? num || 0 : val;
 		}
 		return val;
 	}
-});
+} );
 
-jQuery.each([ "height", "width" ], function( i, name ) {
+jQuery.each( [ "height", "width" ], function( i, name ) {
 	jQuery.cssHooks[ name ] = {
 		get: function( elem, computed, extra ) {
 			if ( computed ) {
-				// certain elements can have dimension info if we invisibly show them
-				// however, it must have a current display style that would benefit from this
-				return rdisplayswap.test( jQuery.css( elem, "display" ) ) && elem.offsetWidth === 0 ?
-					jQuery.swap( elem, cssShow, function() {
-						return getWidthOrHeight( elem, name, extra );
-					}) :
-					getWidthOrHeight( elem, name, extra );
+
+				// Certain elements can have dimension info if we invisibly show them
+				// but it must have a current display style that would benefit
+				return rdisplayswap.test( jQuery.css( elem, "display" ) ) &&
+					elem.offsetWidth === 0 ?
+						swap( elem, cssShow, function() {
+							return getWidthOrHeight( elem, name, extra );
+						} ) :
+						getWidthOrHeight( elem, name, extra );
 			}
 		},
 
 		set: function( elem, value, extra ) {
-			var styles = extra && getStyles( elem );
-			return setPositiveNumber( elem, value, extra ?
-				augmentWidthOrHeight(
+			var matches,
+				styles = extra && getStyles( elem ),
+				subtract = extra && augmentWidthOrHeight(
 					elem,
 					name,
 					extra,
 					jQuery.css( elem, "boxSizing", false, styles ) === "border-box",
 					styles
-				) : 0
-			);
+				);
+
+			// Convert to pixels if value adjustment is needed
+			if ( subtract && ( matches = rcssNum.exec( value ) ) &&
+				( matches[ 3 ] || "px" ) !== "px" ) {
+
+				elem.style[ name ] = value;
+				value = jQuery.css( elem, name );
+			}
+
+			return setPositiveNumber( elem, value, subtract );
 		}
 	};
-});
+} );
+
+jQuery.cssHooks.marginLeft = addGetHookIf( support.reliableMarginLeft,
+	function( elem, computed ) {
+		if ( computed ) {
+			return ( parseFloat( curCSS( elem, "marginLeft" ) ) ||
+				elem.getBoundingClientRect().left -
+					swap( elem, { marginLeft: 0 }, function() {
+						return elem.getBoundingClientRect().left;
+					} )
+				) + "px";
+		}
+	}
+);
 
 // Support: Android 2.3
 jQuery.cssHooks.marginRight = addGetHookIf( support.reliableMarginRight,
 	function( elem, computed ) {
 		if ( computed ) {
-			// WebKit Bug 13343 - getComputedStyle returns wrong value for margin-right
-			// Work around by temporarily setting element display to inline-block
-			return jQuery.swap( elem, { "display": "inline-block" },
+			return swap( elem, { "display": "inline-block" },
 				curCSS, [ elem, "marginRight" ] );
 		}
 	}
 );
 
 // These hooks are used by animate to expand properties
-jQuery.each({
+jQuery.each( {
 	margin: "",
 	padding: "",
 	border: "Width"
@@ -13925,8 +19988,8 @@ jQuery.each({
 			var i = 0,
 				expanded = {},
 
-				// assumes a single number if not a string
-				parts = typeof value === "string" ? value.split(" ") : [ value ];
+				// Assumes a single number if not a string
+				parts = typeof value === "string" ? value.split( " " ) : [ value ];
 
 			for ( ; i < 4; i++ ) {
 				expanded[ prefix + cssExpand[ i ] + suffix ] =
@@ -13940,9 +20003,9 @@ jQuery.each({
 	if ( !rmargin.test( prefix ) ) {
 		jQuery.cssHooks[ prefix + suffix ].set = setPositiveNumber;
 	}
-});
+} );
 
-jQuery.fn.extend({
+jQuery.fn.extend( {
 	css: function( name, value ) {
 		return access( this, function( elem, name, value ) {
 			var styles, len,
@@ -13976,15 +20039,15 @@ jQuery.fn.extend({
 			return state ? this.show() : this.hide();
 		}
 
-		return this.each(function() {
+		return this.each( function() {
 			if ( isHidden( this ) ) {
 				jQuery( this ).show();
 			} else {
 				jQuery( this ).hide();
 			}
-		});
+		} );
 	}
-});
+} );
 
 
 function Tween( elem, options, prop, end, easing ) {
@@ -13997,7 +20060,7 @@ Tween.prototype = {
 	init: function( elem, options, prop, end, easing, unit ) {
 		this.elem = elem;
 		this.prop = prop;
-		this.easing = easing || "swing";
+		this.easing = easing || jQuery.easing._default;
 		this.options = options;
 		this.start = this.now = this.cur();
 		this.end = end;
@@ -14043,25 +20106,32 @@ Tween.propHooks = {
 		get: function( tween ) {
 			var result;
 
-			if ( tween.elem[ tween.prop ] != null &&
-				(!tween.elem.style || tween.elem.style[ tween.prop ] == null) ) {
+			// Use a property on the element directly when it is not a DOM element,
+			// or when there is no matching style property that exists.
+			if ( tween.elem.nodeType !== 1 ||
+				tween.elem[ tween.prop ] != null && tween.elem.style[ tween.prop ] == null ) {
 				return tween.elem[ tween.prop ];
 			}
 
-			// passing an empty string as a 3rd parameter to .css will automatically
-			// attempt a parseFloat and fallback to a string if the parse fails
-			// so, simple values such as "10px" are parsed to Float.
-			// complex values such as "rotate(1rad)" are returned as is.
+			// Passing an empty string as a 3rd parameter to .css will automatically
+			// attempt a parseFloat and fallback to a string if the parse fails.
+			// Simple values such as "10px" are parsed to Float;
+			// complex values such as "rotate(1rad)" are returned as-is.
 			result = jQuery.css( tween.elem, tween.prop, "" );
+
 			// Empty strings, null, undefined and "auto" are converted to 0.
 			return !result || result === "auto" ? 0 : result;
 		},
 		set: function( tween ) {
-			// use step hook for back compat - use cssHook if its there - use .style if its
-			// available and use plain properties where available
+
+			// Use step hook for back compat.
+			// Use cssHook if its there.
+			// Use .style if available and use plain properties where available.
 			if ( jQuery.fx.step[ tween.prop ] ) {
 				jQuery.fx.step[ tween.prop ]( tween );
-			} else if ( tween.elem.style && ( tween.elem.style[ jQuery.cssProps[ tween.prop ] ] != null || jQuery.cssHooks[ tween.prop ] ) ) {
+			} else if ( tween.elem.nodeType === 1 &&
+				( tween.elem.style[ jQuery.cssProps[ tween.prop ] ] != null ||
+					jQuery.cssHooks[ tween.prop ] ) ) {
 				jQuery.style( tween.elem, tween.prop, tween.now + tween.unit );
 			} else {
 				tween.elem[ tween.prop ] = tween.now;
@@ -14072,7 +20142,6 @@ Tween.propHooks = {
 
 // Support: IE9
 // Panic based approach to setting things on disconnected nodes
-
 Tween.propHooks.scrollTop = Tween.propHooks.scrollLeft = {
 	set: function( tween ) {
 		if ( tween.elem.nodeType && tween.elem.parentNode ) {
@@ -14087,7 +20156,8 @@ jQuery.easing = {
 	},
 	swing: function( p ) {
 		return 0.5 - Math.cos( p * Math.PI ) / 2;
-	}
+	},
+	_default: "swing"
 };
 
 jQuery.fx = Tween.prototype.init;
@@ -14101,65 +20171,13 @@ jQuery.fx.step = {};
 var
 	fxNow, timerId,
 	rfxtypes = /^(?:toggle|show|hide)$/,
-	rfxnum = new RegExp( "^(?:([+-])=|)(" + pnum + ")([a-z%]*)$", "i" ),
-	rrun = /queueHooks$/,
-	animationPrefilters = [ defaultPrefilter ],
-	tweeners = {
-		"*": [ function( prop, value ) {
-			var tween = this.createTween( prop, value ),
-				target = tween.cur(),
-				parts = rfxnum.exec( value ),
-				unit = parts && parts[ 3 ] || ( jQuery.cssNumber[ prop ] ? "" : "px" ),
-
-				// Starting value computation is required for potential unit mismatches
-				start = ( jQuery.cssNumber[ prop ] || unit !== "px" && +target ) &&
-					rfxnum.exec( jQuery.css( tween.elem, prop ) ),
-				scale = 1,
-				maxIterations = 20;
-
-			if ( start && start[ 3 ] !== unit ) {
-				// Trust units reported by jQuery.css
-				unit = unit || start[ 3 ];
-
-				// Make sure we update the tween properties later on
-				parts = parts || [];
-
-				// Iteratively approximate from a nonzero starting point
-				start = +target || 1;
-
-				do {
-					// If previous iteration zeroed out, double until we get *something*
-					// Use a string for doubling factor so we don't accidentally see scale as unchanged below
-					scale = scale || ".5";
-
-					// Adjust and apply
-					start = start / scale;
-					jQuery.style( tween.elem, prop, start + unit );
-
-				// Update scale, tolerating zero or NaN from tween.cur()
-				// And breaking the loop if scale is unchanged or perfect, or if we've just had enough
-				} while ( scale !== (scale = tween.cur() / target) && scale !== 1 && --maxIterations );
-			}
-
-			// Update tween properties
-			if ( parts ) {
-				start = tween.start = +start || +target || 0;
-				tween.unit = unit;
-				// If a +=/-= token was provided, we're doing a relative animation
-				tween.end = parts[ 1 ] ?
-					start + ( parts[ 1 ] + 1 ) * parts[ 2 ] :
-					+parts[ 2 ];
-			}
-
-			return tween;
-		} ]
-	};
+	rrun = /queueHooks$/;
 
 // Animations created synchronously will run synchronously
 function createFxNow() {
-	setTimeout(function() {
+	window.setTimeout( function() {
 		fxNow = undefined;
-	});
+	} );
 	return ( fxNow = jQuery.now() );
 }
 
@@ -14169,8 +20187,8 @@ function genFx( type, includeWidth ) {
 		i = 0,
 		attrs = { height: type };
 
-	// if we include width, step value is 1 to do all cssExpand values,
-	// if we don't include width, step value is 2 to skip over Left and Right
+	// If we include width, step value is 1 to do all cssExpand values,
+	// otherwise step value is 2 to skip over Left and Right
 	includeWidth = includeWidth ? 1 : 0;
 	for ( ; i < 4 ; i += 2 - includeWidth ) {
 		which = cssExpand[ i ];
@@ -14186,13 +20204,13 @@ function genFx( type, includeWidth ) {
 
 function createTween( value, prop, animation ) {
 	var tween,
-		collection = ( tweeners[ prop ] || [] ).concat( tweeners[ "*" ] ),
+		collection = ( Animation.tweeners[ prop ] || [] ).concat( Animation.tweeners[ "*" ] ),
 		index = 0,
 		length = collection.length;
 	for ( ; index < length; index++ ) {
-		if ( (tween = collection[ index ].call( animation, prop, value )) ) {
+		if ( ( tween = collection[ index ].call( animation, prop, value ) ) ) {
 
-			// we're done with this property
+			// We're done with this property
 			return tween;
 		}
 	}
@@ -14205,9 +20223,9 @@ function defaultPrefilter( elem, props, opts ) {
 		orig = {},
 		style = elem.style,
 		hidden = elem.nodeType && isHidden( elem ),
-		dataShow = data_priv.get( elem, "fxshow" );
+		dataShow = dataPriv.get( elem, "fxshow" );
 
-	// handle queue: false promises
+	// Handle queue: false promises
 	if ( !opts.queue ) {
 		hooks = jQuery._queueHooks( elem, "fx" );
 		if ( hooks.unqueued == null ) {
@@ -14221,20 +20239,21 @@ function defaultPrefilter( elem, props, opts ) {
 		}
 		hooks.unqueued++;
 
-		anim.always(function() {
-			// doing this makes sure that the complete handler will be called
-			// before this completes
-			anim.always(function() {
+		anim.always( function() {
+
+			// Ensure the complete handler is called before this completes
+			anim.always( function() {
 				hooks.unqueued--;
 				if ( !jQuery.queue( elem, "fx" ).length ) {
 					hooks.empty.fire();
 				}
-			});
-		});
+			} );
+		} );
 	}
 
-	// height/width overflow pass
+	// Height/width overflow pass
 	if ( elem.nodeType === 1 && ( "height" in props || "width" in props ) ) {
+
 		// Make sure that nothing sneaks out
 		// Record all 3 overflow attributes because IE9-10 do not
 		// change the overflow attribute when overflowX and
@@ -14247,7 +20266,7 @@ function defaultPrefilter( elem, props, opts ) {
 
 		// Test default display if display is currently "none"
 		checkDisplay = display === "none" ?
-			data_priv.get( elem, "olddisplay" ) || defaultDisplay( elem.nodeName ) : display;
+			dataPriv.get( elem, "olddisplay" ) || defaultDisplay( elem.nodeName ) : display;
 
 		if ( checkDisplay === "inline" && jQuery.css( elem, "float" ) === "none" ) {
 			style.display = "inline-block";
@@ -14256,11 +20275,11 @@ function defaultPrefilter( elem, props, opts ) {
 
 	if ( opts.overflow ) {
 		style.overflow = "hidden";
-		anim.always(function() {
+		anim.always( function() {
 			style.overflow = opts.overflow[ 0 ];
 			style.overflowX = opts.overflow[ 1 ];
 			style.overflowY = opts.overflow[ 2 ];
-		});
+		} );
 	}
 
 	// show/hide pass
@@ -14271,7 +20290,8 @@ function defaultPrefilter( elem, props, opts ) {
 			toggle = toggle || value === "toggle";
 			if ( value === ( hidden ? "hide" : "show" ) ) {
 
-				// If there is dataShow left over from a stopped hide or show and we are going to proceed with show, we should pretend to be hidden
+				// If there is dataShow left over from a stopped hide or show
+				// and we are going to proceed with show, we should pretend to be hidden
 				if ( value === "show" && dataShow && dataShow[ prop ] !== undefined ) {
 					hidden = true;
 				} else {
@@ -14292,28 +20312,28 @@ function defaultPrefilter( elem, props, opts ) {
 				hidden = dataShow.hidden;
 			}
 		} else {
-			dataShow = data_priv.access( elem, "fxshow", {} );
+			dataShow = dataPriv.access( elem, "fxshow", {} );
 		}
 
-		// store state if its toggle - enables .stop().toggle() to "reverse"
+		// Store state if its toggle - enables .stop().toggle() to "reverse"
 		if ( toggle ) {
 			dataShow.hidden = !hidden;
 		}
 		if ( hidden ) {
 			jQuery( elem ).show();
 		} else {
-			anim.done(function() {
+			anim.done( function() {
 				jQuery( elem ).hide();
-			});
+			} );
 		}
-		anim.done(function() {
+		anim.done( function() {
 			var prop;
 
-			data_priv.remove( elem, "fxshow" );
+			dataPriv.remove( elem, "fxshow" );
 			for ( prop in orig ) {
 				jQuery.style( elem, prop, orig[ prop ] );
 			}
-		});
+		} );
 		for ( prop in orig ) {
 			tween = createTween( hidden ? dataShow[ prop ] : 0, prop, anim );
 
@@ -14327,7 +20347,7 @@ function defaultPrefilter( elem, props, opts ) {
 		}
 
 	// If this is a noop like .hide().hide(), restore an overwritten display value
-	} else if ( (display === "none" ? defaultDisplay( elem.nodeName ) : display) === "inline" ) {
+	} else if ( ( display === "none" ? defaultDisplay( elem.nodeName ) : display ) === "inline" ) {
 		style.display = display;
 	}
 }
@@ -14355,8 +20375,8 @@ function propFilter( props, specialEasing ) {
 			value = hooks.expand( value );
 			delete props[ name ];
 
-			// not quite $.extend, this wont overwrite keys already present.
-			// also - reusing 'index' from above because we have the correct "name"
+			// Not quite $.extend, this won't overwrite existing keys.
+			// Reusing 'index' because we have the correct "name"
 			for ( index in value ) {
 				if ( !( index in props ) ) {
 					props[ index ] = value[ index ];
@@ -14373,18 +20393,21 @@ function Animation( elem, properties, options ) {
 	var result,
 		stopped,
 		index = 0,
-		length = animationPrefilters.length,
+		length = Animation.prefilters.length,
 		deferred = jQuery.Deferred().always( function() {
-			// don't match elem in the :animated selector
+
+			// Don't match elem in the :animated selector
 			delete tick.elem;
-		}),
+		} ),
 		tick = function() {
 			if ( stopped ) {
 				return false;
 			}
 			var currentTime = fxNow || createFxNow(),
 				remaining = Math.max( 0, animation.startTime + animation.duration - currentTime ),
-				// archaic crash bug won't allow us to use 1 - ( 0.5 || 0 ) (#12497)
+
+				// Support: Android 2.3
+				// Archaic crash bug won't allow us to use `1 - ( 0.5 || 0 )` (#12497)
 				temp = remaining / animation.duration || 0,
 				percent = 1 - temp,
 				index = 0,
@@ -14394,7 +20417,7 @@ function Animation( elem, properties, options ) {
 				animation.tweens[ index ].run( percent );
 			}
 
-			deferred.notifyWith( elem, [ animation, percent, remaining ]);
+			deferred.notifyWith( elem, [ animation, percent, remaining ] );
 
 			if ( percent < 1 && length ) {
 				return remaining;
@@ -14403,10 +20426,13 @@ function Animation( elem, properties, options ) {
 				return false;
 			}
 		},
-		animation = deferred.promise({
+		animation = deferred.promise( {
 			elem: elem,
 			props: jQuery.extend( {}, properties ),
-			opts: jQuery.extend( true, { specialEasing: {} }, options ),
+			opts: jQuery.extend( true, {
+				specialEasing: {},
+				easing: jQuery.easing._default
+			}, options ),
 			originalProperties: properties,
 			originalOptions: options,
 			startTime: fxNow || createFxNow(),
@@ -14420,7 +20446,8 @@ function Animation( elem, properties, options ) {
 			},
 			stop: function( gotoEnd ) {
 				var index = 0,
-					// if we are going to the end, we want to run all the tweens
+
+					// If we are going to the end, we want to run all the tweens
 					// otherwise we skip this part
 					length = gotoEnd ? animation.tweens.length : 0;
 				if ( stopped ) {
@@ -14431,23 +20458,27 @@ function Animation( elem, properties, options ) {
 					animation.tweens[ index ].run( 1 );
 				}
 
-				// resolve when we played the last frame
-				// otherwise, reject
+				// Resolve when we played the last frame; otherwise, reject
 				if ( gotoEnd ) {
+					deferred.notifyWith( elem, [ animation, 1, 0 ] );
 					deferred.resolveWith( elem, [ animation, gotoEnd ] );
 				} else {
 					deferred.rejectWith( elem, [ animation, gotoEnd ] );
 				}
 				return this;
 			}
-		}),
+		} ),
 		props = animation.props;
 
 	propFilter( props, animation.opts.specialEasing );
 
 	for ( ; index < length ; index++ ) {
-		result = animationPrefilters[ index ].call( animation, elem, props, animation.opts );
+		result = Animation.prefilters[ index ].call( animation, elem, props, animation.opts );
 		if ( result ) {
+			if ( jQuery.isFunction( result.stop ) ) {
+				jQuery._queueHooks( animation.elem, animation.opts.queue ).stop =
+					jQuery.proxy( result.stop, result );
+			}
 			return result;
 		}
 	}
@@ -14463,7 +20494,7 @@ function Animation( elem, properties, options ) {
 			elem: elem,
 			anim: animation,
 			queue: animation.opts.queue
-		})
+		} )
 	);
 
 	// attach callbacks from options
@@ -14474,13 +20505,20 @@ function Animation( elem, properties, options ) {
 }
 
 jQuery.Animation = jQuery.extend( Animation, {
+	tweeners: {
+		"*": [ function( prop, value ) {
+			var tween = this.createTween( prop, value );
+			adjustCSS( tween.elem, prop, rcssNum.exec( value ), tween );
+			return tween;
+		} ]
+	},
 
 	tweener: function( props, callback ) {
 		if ( jQuery.isFunction( props ) ) {
 			callback = props;
 			props = [ "*" ];
 		} else {
-			props = props.split(" ");
+			props = props.match( rnotwhite );
 		}
 
 		var prop,
@@ -14489,19 +20527,21 @@ jQuery.Animation = jQuery.extend( Animation, {
 
 		for ( ; index < length ; index++ ) {
 			prop = props[ index ];
-			tweeners[ prop ] = tweeners[ prop ] || [];
-			tweeners[ prop ].unshift( callback );
+			Animation.tweeners[ prop ] = Animation.tweeners[ prop ] || [];
+			Animation.tweeners[ prop ].unshift( callback );
 		}
 	},
 
+	prefilters: [ defaultPrefilter ],
+
 	prefilter: function( callback, prepend ) {
 		if ( prepend ) {
-			animationPrefilters.unshift( callback );
+			Animation.prefilters.unshift( callback );
 		} else {
-			animationPrefilters.push( callback );
+			Animation.prefilters.push( callback );
 		}
 	}
-});
+} );
 
 jQuery.speed = function( speed, easing, fn ) {
 	var opt = speed && typeof speed === "object" ? jQuery.extend( {}, speed ) : {
@@ -14511,10 +20551,11 @@ jQuery.speed = function( speed, easing, fn ) {
 		easing: fn && easing || easing && !jQuery.isFunction( easing ) && easing
 	};
 
-	opt.duration = jQuery.fx.off ? 0 : typeof opt.duration === "number" ? opt.duration :
-		opt.duration in jQuery.fx.speeds ? jQuery.fx.speeds[ opt.duration ] : jQuery.fx.speeds._default;
+	opt.duration = jQuery.fx.off ? 0 : typeof opt.duration === "number" ?
+		opt.duration : opt.duration in jQuery.fx.speeds ?
+			jQuery.fx.speeds[ opt.duration ] : jQuery.fx.speeds._default;
 
-	// normalize opt.queue - true/undefined/null -> "fx"
+	// Normalize opt.queue - true/undefined/null -> "fx"
 	if ( opt.queue == null || opt.queue === true ) {
 		opt.queue = "fx";
 	}
@@ -14535,24 +20576,25 @@ jQuery.speed = function( speed, easing, fn ) {
 	return opt;
 };
 
-jQuery.fn.extend({
+jQuery.fn.extend( {
 	fadeTo: function( speed, to, easing, callback ) {
 
-		// show any hidden elements after setting opacity to 0
+		// Show any hidden elements after setting opacity to 0
 		return this.filter( isHidden ).css( "opacity", 0 ).show()
 
-			// animate to the value specified
-			.end().animate({ opacity: to }, speed, easing, callback );
+			// Animate to the value specified
+			.end().animate( { opacity: to }, speed, easing, callback );
 	},
 	animate: function( prop, speed, easing, callback ) {
 		var empty = jQuery.isEmptyObject( prop ),
 			optall = jQuery.speed( speed, easing, callback ),
 			doAnimation = function() {
+
 				// Operate on a copy of prop so per-property easing won't be lost
 				var anim = Animation( this, jQuery.extend( {}, prop ), optall );
 
 				// Empty animations, or finishing resolves immediately
-				if ( empty || data_priv.get( this, "finish" ) ) {
+				if ( empty || dataPriv.get( this, "finish" ) ) {
 					anim.stop( true );
 				}
 			};
@@ -14578,11 +20620,11 @@ jQuery.fn.extend({
 			this.queue( type || "fx", [] );
 		}
 
-		return this.each(function() {
+		return this.each( function() {
 			var dequeue = true,
 				index = type != null && type + "queueHooks",
 				timers = jQuery.timers,
-				data = data_priv.get( this );
+				data = dataPriv.get( this );
 
 			if ( index ) {
 				if ( data[ index ] && data[ index ].stop ) {
@@ -14597,44 +20639,46 @@ jQuery.fn.extend({
 			}
 
 			for ( index = timers.length; index--; ) {
-				if ( timers[ index ].elem === this && (type == null || timers[ index ].queue === type) ) {
+				if ( timers[ index ].elem === this &&
+					( type == null || timers[ index ].queue === type ) ) {
+
 					timers[ index ].anim.stop( gotoEnd );
 					dequeue = false;
 					timers.splice( index, 1 );
 				}
 			}
 
-			// start the next in the queue if the last step wasn't forced
-			// timers currently will call their complete callbacks, which will dequeue
-			// but only if they were gotoEnd
+			// Start the next in the queue if the last step wasn't forced.
+			// Timers currently will call their complete callbacks, which
+			// will dequeue but only if they were gotoEnd.
 			if ( dequeue || !gotoEnd ) {
 				jQuery.dequeue( this, type );
 			}
-		});
+		} );
 	},
 	finish: function( type ) {
 		if ( type !== false ) {
 			type = type || "fx";
 		}
-		return this.each(function() {
+		return this.each( function() {
 			var index,
-				data = data_priv.get( this ),
+				data = dataPriv.get( this ),
 				queue = data[ type + "queue" ],
 				hooks = data[ type + "queueHooks" ],
 				timers = jQuery.timers,
 				length = queue ? queue.length : 0;
 
-			// enable finishing flag on private data
+			// Enable finishing flag on private data
 			data.finish = true;
 
-			// empty the queue first
+			// Empty the queue first
 			jQuery.queue( this, type, [] );
 
 			if ( hooks && hooks.stop ) {
 				hooks.stop.call( this, true );
 			}
 
-			// look for any active animations, and finish them
+			// Look for any active animations, and finish them
 			for ( index = timers.length; index--; ) {
 				if ( timers[ index ].elem === this && timers[ index ].queue === type ) {
 					timers[ index ].anim.stop( true );
@@ -14642,33 +20686,33 @@ jQuery.fn.extend({
 				}
 			}
 
-			// look for any animations in the old queue and finish them
+			// Look for any animations in the old queue and finish them
 			for ( index = 0; index < length; index++ ) {
 				if ( queue[ index ] && queue[ index ].finish ) {
 					queue[ index ].finish.call( this );
 				}
 			}
 
-			// turn off finishing flag
+			// Turn off finishing flag
 			delete data.finish;
-		});
+		} );
 	}
-});
+} );
 
-jQuery.each([ "toggle", "show", "hide" ], function( i, name ) {
+jQuery.each( [ "toggle", "show", "hide" ], function( i, name ) {
 	var cssFn = jQuery.fn[ name ];
 	jQuery.fn[ name ] = function( speed, easing, callback ) {
 		return speed == null || typeof speed === "boolean" ?
 			cssFn.apply( this, arguments ) :
 			this.animate( genFx( name, true ), speed, easing, callback );
 	};
-});
+} );
 
 // Generate shortcuts for custom animations
-jQuery.each({
-	slideDown: genFx("show"),
-	slideUp: genFx("hide"),
-	slideToggle: genFx("toggle"),
+jQuery.each( {
+	slideDown: genFx( "show" ),
+	slideUp: genFx( "hide" ),
+	slideToggle: genFx( "toggle" ),
 	fadeIn: { opacity: "show" },
 	fadeOut: { opacity: "hide" },
 	fadeToggle: { opacity: "toggle" }
@@ -14676,7 +20720,7 @@ jQuery.each({
 	jQuery.fn[ name ] = function( speed, easing, callback ) {
 		return this.animate( props, speed, easing, callback );
 	};
-});
+} );
 
 jQuery.timers = [];
 jQuery.fx.tick = function() {
@@ -14688,6 +20732,7 @@ jQuery.fx.tick = function() {
 
 	for ( ; i < timers.length; i++ ) {
 		timer = timers[ i ];
+
 		// Checks the timer has not already been removed
 		if ( !timer() && timers[ i ] === timer ) {
 			timers.splice( i--, 1 );
@@ -14710,97 +20755,98 @@ jQuery.fx.timer = function( timer ) {
 };
 
 jQuery.fx.interval = 13;
-
 jQuery.fx.start = function() {
 	if ( !timerId ) {
-		timerId = setInterval( jQuery.fx.tick, jQuery.fx.interval );
+		timerId = window.setInterval( jQuery.fx.tick, jQuery.fx.interval );
 	}
 };
 
 jQuery.fx.stop = function() {
-	clearInterval( timerId );
+	window.clearInterval( timerId );
+
 	timerId = null;
 };
 
 jQuery.fx.speeds = {
 	slow: 600,
 	fast: 200,
+
 	// Default speed
 	_default: 400
 };
 
 
 // Based off of the plugin by Clint Helfers, with permission.
-// http://blindsignals.com/index.php/2009/07/jquery-delay/
+// http://web.archive.org/web/20100324014747/http://blindsignals.com/index.php/2009/07/jquery-delay/
 jQuery.fn.delay = function( time, type ) {
 	time = jQuery.fx ? jQuery.fx.speeds[ time ] || time : time;
 	type = type || "fx";
 
 	return this.queue( type, function( next, hooks ) {
-		var timeout = setTimeout( next, time );
+		var timeout = window.setTimeout( next, time );
 		hooks.stop = function() {
-			clearTimeout( timeout );
+			window.clearTimeout( timeout );
 		};
-	});
+	} );
 };
 
 
-(function() {
+( function() {
 	var input = document.createElement( "input" ),
 		select = document.createElement( "select" ),
 		opt = select.appendChild( document.createElement( "option" ) );
 
 	input.type = "checkbox";
 
-	// Support: iOS 5.1, Android 4.x, Android 2.3
-	// Check the default checkbox/radio value ("" on old WebKit; "on" elsewhere)
+	// Support: iOS<=5.1, Android<=4.2+
+	// Default value for a checkbox should be "on"
 	support.checkOn = input.value !== "";
 
-	// Must access the parent to make an option select properly
-	// Support: IE9, IE10
+	// Support: IE<=11+
+	// Must access selectedIndex to make default options select
 	support.optSelected = opt.selected;
 
-	// Make sure that the options inside disabled selects aren't marked as disabled
-	// (WebKit marks them as disabled)
+	// Support: Android<=2.3
+	// Options inside disabled selects are incorrectly marked as disabled
 	select.disabled = true;
 	support.optDisabled = !opt.disabled;
 
-	// Check if an input maintains its value after becoming a radio
-	// Support: IE9, IE10
+	// Support: IE<=11+
+	// An input loses its value after becoming a radio
 	input = document.createElement( "input" );
 	input.value = "t";
 	input.type = "radio";
 	support.radioValue = input.value === "t";
-})();
+} )();
 
 
-var nodeHook, boolHook,
+var boolHook,
 	attrHandle = jQuery.expr.attrHandle;
 
-jQuery.fn.extend({
+jQuery.fn.extend( {
 	attr: function( name, value ) {
 		return access( this, jQuery.attr, name, value, arguments.length > 1 );
 	},
 
 	removeAttr: function( name ) {
-		return this.each(function() {
+		return this.each( function() {
 			jQuery.removeAttr( this, name );
-		});
+		} );
 	}
-});
+} );
 
-jQuery.extend({
+jQuery.extend( {
 	attr: function( elem, name, value ) {
-		var hooks, ret,
+		var ret, hooks,
 			nType = elem.nodeType;
 
-		// don't get/set attributes on text, comment and attribute nodes
-		if ( !elem || nType === 3 || nType === 8 || nType === 2 ) {
+		// Don't get/set attributes on text, comment and attribute nodes
+		if ( nType === 3 || nType === 8 || nType === 2 ) {
 			return;
 		}
 
 		// Fallback to prop when attributes are not supported
-		if ( typeof elem.getAttribute === strundefined ) {
+		if ( typeof elem.getAttribute === "undefined" ) {
 			return jQuery.prop( elem, name, value );
 		}
 
@@ -14809,53 +20855,32 @@ jQuery.extend({
 		if ( nType !== 1 || !jQuery.isXMLDoc( elem ) ) {
 			name = name.toLowerCase();
 			hooks = jQuery.attrHooks[ name ] ||
-				( jQuery.expr.match.bool.test( name ) ? boolHook : nodeHook );
+				( jQuery.expr.match.bool.test( name ) ? boolHook : undefined );
 		}
 
 		if ( value !== undefined ) {
-
 			if ( value === null ) {
 				jQuery.removeAttr( elem, name );
+				return;
+			}
 
-			} else if ( hooks && "set" in hooks && (ret = hooks.set( elem, value, name )) !== undefined ) {
+			if ( hooks && "set" in hooks &&
+				( ret = hooks.set( elem, value, name ) ) !== undefined ) {
 				return ret;
-
-			} else {
-				elem.setAttribute( name, value + "" );
-				return value;
 			}
 
-		} else if ( hooks && "get" in hooks && (ret = hooks.get( elem, name )) !== null ) {
+			elem.setAttribute( name, value + "" );
+			return value;
+		}
+
+		if ( hooks && "get" in hooks && ( ret = hooks.get( elem, name ) ) !== null ) {
 			return ret;
-
-		} else {
-			ret = jQuery.find.attr( elem, name );
-
-			// Non-existent attributes return null, we normalize to undefined
-			return ret == null ?
-				undefined :
-				ret;
 		}
-	},
 
-	removeAttr: function( elem, value ) {
-		var name, propName,
-			i = 0,
-			attrNames = value && value.match( rnotwhite );
+		ret = jQuery.find.attr( elem, name );
 
-		if ( attrNames && elem.nodeType === 1 ) {
-			while ( (name = attrNames[i++]) ) {
-				propName = jQuery.propFix[ name ] || name;
-
-				// Boolean attributes get special treatment (#10870)
-				if ( jQuery.expr.match.bool.test( name ) ) {
-					// Set corresponding property to false
-					elem[ propName ] = false;
-				}
-
-				elem.removeAttribute( name );
-			}
-		}
+		// Non-existent attributes return null, we normalize to undefined
+		return ret == null ? undefined : ret;
 	},
 
 	attrHooks: {
@@ -14863,8 +20888,6 @@ jQuery.extend({
 			set: function( elem, value ) {
 				if ( !support.radioValue && value === "radio" &&
 					jQuery.nodeName( elem, "input" ) ) {
-					// Setting the type on a radio button after the value resets the value in IE6-9
-					// Reset value to default in case type is set after value during creation
 					var val = elem.value;
 					elem.setAttribute( "type", value );
 					if ( val ) {
@@ -14874,13 +20897,35 @@ jQuery.extend({
 				}
 			}
 		}
+	},
+
+	removeAttr: function( elem, value ) {
+		var name, propName,
+			i = 0,
+			attrNames = value && value.match( rnotwhite );
+
+		if ( attrNames && elem.nodeType === 1 ) {
+			while ( ( name = attrNames[ i++ ] ) ) {
+				propName = jQuery.propFix[ name ] || name;
+
+				// Boolean attributes get special treatment (#10870)
+				if ( jQuery.expr.match.bool.test( name ) ) {
+
+					// Set corresponding property to false
+					elem[ propName ] = false;
+				}
+
+				elem.removeAttribute( name );
+			}
+		}
 	}
-});
+} );
 
 // Hooks for boolean attributes
 boolHook = {
 	set: function( elem, value, name ) {
 		if ( value === false ) {
+
 			// Remove boolean attributes when set to false
 			jQuery.removeAttr( elem, name );
 		} else {
@@ -14895,6 +20940,7 @@ jQuery.each( jQuery.expr.match.bool.source.match( /\w+/g ), function( i, name ) 
 	attrHandle[ name ] = function( elem, name, isXML ) {
 		var ret, handle;
 		if ( !isXML ) {
+
 			// Avoid an infinite loop by temporarily removing this function from the getter
 			handle = attrHandle[ name ];
 			attrHandle[ name ] = ret;
@@ -14905,73 +20951,91 @@ jQuery.each( jQuery.expr.match.bool.source.match( /\w+/g ), function( i, name ) 
 		}
 		return ret;
 	};
-});
+} );
 
 
 
 
-var rfocusable = /^(?:input|select|textarea|button)$/i;
+var rfocusable = /^(?:input|select|textarea|button)$/i,
+	rclickable = /^(?:a|area)$/i;
 
-jQuery.fn.extend({
+jQuery.fn.extend( {
 	prop: function( name, value ) {
 		return access( this, jQuery.prop, name, value, arguments.length > 1 );
 	},
 
 	removeProp: function( name ) {
-		return this.each(function() {
+		return this.each( function() {
 			delete this[ jQuery.propFix[ name ] || name ];
-		});
+		} );
 	}
-});
+} );
 
-jQuery.extend({
-	propFix: {
-		"for": "htmlFor",
-		"class": "className"
-	},
-
+jQuery.extend( {
 	prop: function( elem, name, value ) {
-		var ret, hooks, notxml,
+		var ret, hooks,
 			nType = elem.nodeType;
 
-		// don't get/set properties on text, comment and attribute nodes
-		if ( !elem || nType === 3 || nType === 8 || nType === 2 ) {
+		// Don't get/set properties on text, comment and attribute nodes
+		if ( nType === 3 || nType === 8 || nType === 2 ) {
 			return;
 		}
 
-		notxml = nType !== 1 || !jQuery.isXMLDoc( elem );
+		if ( nType !== 1 || !jQuery.isXMLDoc( elem ) ) {
 
-		if ( notxml ) {
 			// Fix name and attach hooks
 			name = jQuery.propFix[ name ] || name;
 			hooks = jQuery.propHooks[ name ];
 		}
 
 		if ( value !== undefined ) {
-			return hooks && "set" in hooks && (ret = hooks.set( elem, value, name )) !== undefined ?
-				ret :
-				( elem[ name ] = value );
+			if ( hooks && "set" in hooks &&
+				( ret = hooks.set( elem, value, name ) ) !== undefined ) {
+				return ret;
+			}
 
-		} else {
-			return hooks && "get" in hooks && (ret = hooks.get( elem, name )) !== null ?
-				ret :
-				elem[ name ];
+			return ( elem[ name ] = value );
 		}
+
+		if ( hooks && "get" in hooks && ( ret = hooks.get( elem, name ) ) !== null ) {
+			return ret;
+		}
+
+		return elem[ name ];
 	},
 
 	propHooks: {
 		tabIndex: {
 			get: function( elem ) {
-				return elem.hasAttribute( "tabindex" ) || rfocusable.test( elem.nodeName ) || elem.href ?
-					elem.tabIndex :
-					-1;
+
+				// elem.tabIndex doesn't always return the
+				// correct value when it hasn't been explicitly set
+				// http://fluidproject.org/blog/2008/01/09/getting-setting-and-removing-tabindex-values-with-javascript/
+				// Use proper attribute retrieval(#12072)
+				var tabindex = jQuery.find.attr( elem, "tabindex" );
+
+				return tabindex ?
+					parseInt( tabindex, 10 ) :
+					rfocusable.test( elem.nodeName ) ||
+						rclickable.test( elem.nodeName ) && elem.href ?
+							0 :
+							-1;
 			}
 		}
-	}
-});
+	},
 
-// Support: IE9+
-// Selectedness for an option in an optgroup can be inaccurate
+	propFix: {
+		"for": "htmlFor",
+		"class": "className"
+	}
+} );
+
+// Support: IE <=11 only
+// Accessing the selectedIndex property
+// forces the browser to respect setting selected
+// on the option
+// The getter ensures a default option is selected
+// when in an optgroup
 if ( !support.optSelected ) {
 	jQuery.propHooks.selected = {
 		get: function( elem ) {
@@ -14980,11 +21044,21 @@ if ( !support.optSelected ) {
 				parent.parentNode.selectedIndex;
 			}
 			return null;
+		},
+		set: function( elem ) {
+			var parent = elem.parentNode;
+			if ( parent ) {
+				parent.selectedIndex;
+
+				if ( parent.parentNode ) {
+					parent.parentNode.selectedIndex;
+				}
+			}
 		}
 	};
 }
 
-jQuery.each([
+jQuery.each( [
 	"tabIndex",
 	"readOnly",
 	"maxLength",
@@ -14997,49 +21071,48 @@ jQuery.each([
 	"contentEditable"
 ], function() {
 	jQuery.propFix[ this.toLowerCase() ] = this;
-});
+} );
 
 
 
 
 var rclass = /[\t\r\n\f]/g;
 
-jQuery.fn.extend({
+function getClass( elem ) {
+	return elem.getAttribute && elem.getAttribute( "class" ) || "";
+}
+
+jQuery.fn.extend( {
 	addClass: function( value ) {
-		var classes, elem, cur, clazz, j, finalValue,
-			proceed = typeof value === "string" && value,
-			i = 0,
-			len = this.length;
+		var classes, elem, cur, curValue, clazz, j, finalValue,
+			i = 0;
 
 		if ( jQuery.isFunction( value ) ) {
-			return this.each(function( j ) {
-				jQuery( this ).addClass( value.call( this, j, this.className ) );
-			});
+			return this.each( function( j ) {
+				jQuery( this ).addClass( value.call( this, j, getClass( this ) ) );
+			} );
 		}
 
-		if ( proceed ) {
-			// The disjunction here is for better compressibility (see removeClass)
-			classes = ( value || "" ).match( rnotwhite ) || [];
+		if ( typeof value === "string" && value ) {
+			classes = value.match( rnotwhite ) || [];
 
-			for ( ; i < len; i++ ) {
-				elem = this[ i ];
-				cur = elem.nodeType === 1 && ( elem.className ?
-					( " " + elem.className + " " ).replace( rclass, " " ) :
-					" "
-				);
+			while ( ( elem = this[ i++ ] ) ) {
+				curValue = getClass( elem );
+				cur = elem.nodeType === 1 &&
+					( " " + curValue + " " ).replace( rclass, " " );
 
 				if ( cur ) {
 					j = 0;
-					while ( (clazz = classes[j++]) ) {
+					while ( ( clazz = classes[ j++ ] ) ) {
 						if ( cur.indexOf( " " + clazz + " " ) < 0 ) {
 							cur += clazz + " ";
 						}
 					}
 
-					// only assign if different to avoid unneeded rendering.
+					// Only assign if different to avoid unneeded rendering.
 					finalValue = jQuery.trim( cur );
-					if ( elem.className !== finalValue ) {
-						elem.className = finalValue;
+					if ( curValue !== finalValue ) {
+						elem.setAttribute( "class", finalValue );
 					}
 				}
 			}
@@ -15049,40 +21122,43 @@ jQuery.fn.extend({
 	},
 
 	removeClass: function( value ) {
-		var classes, elem, cur, clazz, j, finalValue,
-			proceed = arguments.length === 0 || typeof value === "string" && value,
-			i = 0,
-			len = this.length;
+		var classes, elem, cur, curValue, clazz, j, finalValue,
+			i = 0;
 
 		if ( jQuery.isFunction( value ) ) {
-			return this.each(function( j ) {
-				jQuery( this ).removeClass( value.call( this, j, this.className ) );
-			});
+			return this.each( function( j ) {
+				jQuery( this ).removeClass( value.call( this, j, getClass( this ) ) );
+			} );
 		}
-		if ( proceed ) {
-			classes = ( value || "" ).match( rnotwhite ) || [];
 
-			for ( ; i < len; i++ ) {
-				elem = this[ i ];
+		if ( !arguments.length ) {
+			return this.attr( "class", "" );
+		}
+
+		if ( typeof value === "string" && value ) {
+			classes = value.match( rnotwhite ) || [];
+
+			while ( ( elem = this[ i++ ] ) ) {
+				curValue = getClass( elem );
+
 				// This expression is here for better compressibility (see addClass)
-				cur = elem.nodeType === 1 && ( elem.className ?
-					( " " + elem.className + " " ).replace( rclass, " " ) :
-					""
-				);
+				cur = elem.nodeType === 1 &&
+					( " " + curValue + " " ).replace( rclass, " " );
 
 				if ( cur ) {
 					j = 0;
-					while ( (clazz = classes[j++]) ) {
+					while ( ( clazz = classes[ j++ ] ) ) {
+
 						// Remove *all* instances
-						while ( cur.indexOf( " " + clazz + " " ) >= 0 ) {
+						while ( cur.indexOf( " " + clazz + " " ) > -1 ) {
 							cur = cur.replace( " " + clazz + " ", " " );
 						}
 					}
 
-					// only assign if different to avoid unneeded rendering.
-					finalValue = value ? jQuery.trim( cur ) : "";
-					if ( elem.className !== finalValue ) {
-						elem.className = finalValue;
+					// Only assign if different to avoid unneeded rendering.
+					finalValue = jQuery.trim( cur );
+					if ( curValue !== finalValue ) {
+						elem.setAttribute( "class", finalValue );
 					}
 				}
 			}
@@ -15099,21 +21175,27 @@ jQuery.fn.extend({
 		}
 
 		if ( jQuery.isFunction( value ) ) {
-			return this.each(function( i ) {
-				jQuery( this ).toggleClass( value.call(this, i, this.className, stateVal), stateVal );
-			});
+			return this.each( function( i ) {
+				jQuery( this ).toggleClass(
+					value.call( this, i, getClass( this ), stateVal ),
+					stateVal
+				);
+			} );
 		}
 
-		return this.each(function() {
-			if ( type === "string" ) {
-				// toggle individual class names
-				var className,
-					i = 0,
-					self = jQuery( this ),
-					classNames = value.match( rnotwhite ) || [];
+		return this.each( function() {
+			var className, i, self, classNames;
 
-				while ( (className = classNames[ i++ ]) ) {
-					// check each className given, space separated list
+			if ( type === "string" ) {
+
+				// Toggle individual class names
+				i = 0;
+				self = jQuery( this );
+				classNames = value.match( rnotwhite ) || [];
+
+				while ( ( className = classNames[ i++ ] ) ) {
+
+					// Check each className given, space separated list
 					if ( self.hasClass( className ) ) {
 						self.removeClass( className );
 					} else {
@@ -15122,59 +21204,78 @@ jQuery.fn.extend({
 				}
 
 			// Toggle whole class name
-			} else if ( type === strundefined || type === "boolean" ) {
-				if ( this.className ) {
-					// store className if set
-					data_priv.set( this, "__className__", this.className );
+			} else if ( value === undefined || type === "boolean" ) {
+				className = getClass( this );
+				if ( className ) {
+
+					// Store className if set
+					dataPriv.set( this, "__className__", className );
 				}
 
-				// If the element has a class name or if we're passed "false",
+				// If the element has a class name or if we're passed `false`,
 				// then remove the whole classname (if there was one, the above saved it).
 				// Otherwise bring back whatever was previously saved (if anything),
 				// falling back to the empty string if nothing was stored.
-				this.className = this.className || value === false ? "" : data_priv.get( this, "__className__" ) || "";
+				if ( this.setAttribute ) {
+					this.setAttribute( "class",
+						className || value === false ?
+						"" :
+						dataPriv.get( this, "__className__" ) || ""
+					);
+				}
 			}
-		});
+		} );
 	},
 
 	hasClass: function( selector ) {
-		var className = " " + selector + " ",
-			i = 0,
-			l = this.length;
-		for ( ; i < l; i++ ) {
-			if ( this[i].nodeType === 1 && (" " + this[i].className + " ").replace(rclass, " ").indexOf( className ) >= 0 ) {
+		var className, elem,
+			i = 0;
+
+		className = " " + selector + " ";
+		while ( ( elem = this[ i++ ] ) ) {
+			if ( elem.nodeType === 1 &&
+				( " " + getClass( elem ) + " " ).replace( rclass, " " )
+					.indexOf( className ) > -1
+			) {
 				return true;
 			}
 		}
 
 		return false;
 	}
-});
+} );
 
 
 
 
-var rreturn = /\r/g;
+var rreturn = /\r/g,
+	rspaces = /[\x20\t\r\n\f]+/g;
 
-jQuery.fn.extend({
+jQuery.fn.extend( {
 	val: function( value ) {
 		var hooks, ret, isFunction,
-			elem = this[0];
+			elem = this[ 0 ];
 
 		if ( !arguments.length ) {
 			if ( elem ) {
-				hooks = jQuery.valHooks[ elem.type ] || jQuery.valHooks[ elem.nodeName.toLowerCase() ];
+				hooks = jQuery.valHooks[ elem.type ] ||
+					jQuery.valHooks[ elem.nodeName.toLowerCase() ];
 
-				if ( hooks && "get" in hooks && (ret = hooks.get( elem, "value" )) !== undefined ) {
+				if ( hooks &&
+					"get" in hooks &&
+					( ret = hooks.get( elem, "value" ) ) !== undefined
+				) {
 					return ret;
 				}
 
 				ret = elem.value;
 
 				return typeof ret === "string" ?
-					// handle most common string cases
-					ret.replace(rreturn, "") :
-					// handle cases where value is null/undef or number
+
+					// Handle most common string cases
+					ret.replace( rreturn, "" ) :
+
+					// Handle cases where value is null/undef or number
 					ret == null ? "" : ret;
 			}
 
@@ -15183,7 +21284,7 @@ jQuery.fn.extend({
 
 		isFunction = jQuery.isFunction( value );
 
-		return this.each(function( i ) {
+		return this.each( function( i ) {
 			var val;
 
 			if ( this.nodeType !== 1 ) {
@@ -15206,29 +21307,33 @@ jQuery.fn.extend({
 			} else if ( jQuery.isArray( val ) ) {
 				val = jQuery.map( val, function( value ) {
 					return value == null ? "" : value + "";
-				});
+				} );
 			}
 
 			hooks = jQuery.valHooks[ this.type ] || jQuery.valHooks[ this.nodeName.toLowerCase() ];
 
 			// If set returns undefined, fall back to normal setting
-			if ( !hooks || !("set" in hooks) || hooks.set( this, val, "value" ) === undefined ) {
+			if ( !hooks || !( "set" in hooks ) || hooks.set( this, val, "value" ) === undefined ) {
 				this.value = val;
 			}
-		});
+		} );
 	}
-});
+} );
 
-jQuery.extend({
+jQuery.extend( {
 	valHooks: {
 		option: {
 			get: function( elem ) {
+
 				var val = jQuery.find.attr( elem, "value" );
 				return val != null ?
 					val :
+
 					// Support: IE10-11+
 					// option.text throws exceptions (#14686, #14858)
-					jQuery.trim( jQuery.text( elem ) );
+					// Strip and collapse whitespace
+					// https://html.spec.whatwg.org/#strip-and-collapse-whitespace
+					jQuery.trim( jQuery.text( elem ) ).replace( rspaces, " " );
 			}
 		},
 		select: {
@@ -15247,11 +21352,14 @@ jQuery.extend({
 				for ( ; i < max; i++ ) {
 					option = options[ i ];
 
-					// IE6-9 doesn't update selected after form reset (#2551)
+					// IE8-9 doesn't update selected after form reset (#2551)
 					if ( ( option.selected || i === index ) &&
+
 							// Don't return options that are disabled or in a disabled optgroup
-							( support.optDisabled ? !option.disabled : option.getAttribute( "disabled" ) === null ) &&
-							( !option.parentNode.disabled || !jQuery.nodeName( option.parentNode, "optgroup" ) ) ) {
+							( support.optDisabled ?
+								!option.disabled : option.getAttribute( "disabled" ) === null ) &&
+							( !option.parentNode.disabled ||
+								!jQuery.nodeName( option.parentNode, "optgroup" ) ) ) {
 
 						// Get the specific value for the option
 						value = jQuery( option ).val();
@@ -15277,12 +21385,14 @@ jQuery.extend({
 
 				while ( i-- ) {
 					option = options[ i ];
-					if ( (option.selected = jQuery.inArray( option.value, values ) >= 0) ) {
+					if ( option.selected =
+						jQuery.inArray( jQuery.valHooks.option.get( option ), values ) > -1
+					) {
 						optionSet = true;
 					}
 				}
 
-				// force browsers to behave consistently when non-matching value is set
+				// Force browsers to behave consistently when non-matching value is set
 				if ( !optionSet ) {
 					elem.selectedIndex = -1;
 				}
@@ -15290,25 +21400,23 @@ jQuery.extend({
 			}
 		}
 	}
-});
+} );
 
 // Radios and checkboxes getter/setter
-jQuery.each([ "radio", "checkbox" ], function() {
+jQuery.each( [ "radio", "checkbox" ], function() {
 	jQuery.valHooks[ this ] = {
 		set: function( elem, value ) {
 			if ( jQuery.isArray( value ) ) {
-				return ( elem.checked = jQuery.inArray( jQuery(elem).val(), value ) >= 0 );
+				return ( elem.checked = jQuery.inArray( jQuery( elem ).val(), value ) > -1 );
 			}
 		}
 	};
 	if ( !support.checkOn ) {
 		jQuery.valHooks[ this ].get = function( elem ) {
-			// Support: Webkit
-			// "" is returned instead of "on" if a value isn't specified
-			return elem.getAttribute("value") === null ? "on" : elem.value;
+			return elem.getAttribute( "value" ) === null ? "on" : elem.value;
 		};
 	}
-});
+} );
 
 
 
@@ -15316,9 +21424,182 @@ jQuery.each([ "radio", "checkbox" ], function() {
 // Return jQuery for attributes-only inclusion
 
 
-jQuery.each( ("blur focus focusin focusout load resize scroll unload click dblclick " +
+var rfocusMorph = /^(?:focusinfocus|focusoutblur)$/;
+
+jQuery.extend( jQuery.event, {
+
+	trigger: function( event, data, elem, onlyHandlers ) {
+
+		var i, cur, tmp, bubbleType, ontype, handle, special,
+			eventPath = [ elem || document ],
+			type = hasOwn.call( event, "type" ) ? event.type : event,
+			namespaces = hasOwn.call( event, "namespace" ) ? event.namespace.split( "." ) : [];
+
+		cur = tmp = elem = elem || document;
+
+		// Don't do events on text and comment nodes
+		if ( elem.nodeType === 3 || elem.nodeType === 8 ) {
+			return;
+		}
+
+		// focus/blur morphs to focusin/out; ensure we're not firing them right now
+		if ( rfocusMorph.test( type + jQuery.event.triggered ) ) {
+			return;
+		}
+
+		if ( type.indexOf( "." ) > -1 ) {
+
+			// Namespaced trigger; create a regexp to match event type in handle()
+			namespaces = type.split( "." );
+			type = namespaces.shift();
+			namespaces.sort();
+		}
+		ontype = type.indexOf( ":" ) < 0 && "on" + type;
+
+		// Caller can pass in a jQuery.Event object, Object, or just an event type string
+		event = event[ jQuery.expando ] ?
+			event :
+			new jQuery.Event( type, typeof event === "object" && event );
+
+		// Trigger bitmask: & 1 for native handlers; & 2 for jQuery (always true)
+		event.isTrigger = onlyHandlers ? 2 : 3;
+		event.namespace = namespaces.join( "." );
+		event.rnamespace = event.namespace ?
+			new RegExp( "(^|\\.)" + namespaces.join( "\\.(?:.*\\.|)" ) + "(\\.|$)" ) :
+			null;
+
+		// Clean up the event in case it is being reused
+		event.result = undefined;
+		if ( !event.target ) {
+			event.target = elem;
+		}
+
+		// Clone any incoming data and prepend the event, creating the handler arg list
+		data = data == null ?
+			[ event ] :
+			jQuery.makeArray( data, [ event ] );
+
+		// Allow special events to draw outside the lines
+		special = jQuery.event.special[ type ] || {};
+		if ( !onlyHandlers && special.trigger && special.trigger.apply( elem, data ) === false ) {
+			return;
+		}
+
+		// Determine event propagation path in advance, per W3C events spec (#9951)
+		// Bubble up to document, then to window; watch for a global ownerDocument var (#9724)
+		if ( !onlyHandlers && !special.noBubble && !jQuery.isWindow( elem ) ) {
+
+			bubbleType = special.delegateType || type;
+			if ( !rfocusMorph.test( bubbleType + type ) ) {
+				cur = cur.parentNode;
+			}
+			for ( ; cur; cur = cur.parentNode ) {
+				eventPath.push( cur );
+				tmp = cur;
+			}
+
+			// Only add window if we got to document (e.g., not plain obj or detached DOM)
+			if ( tmp === ( elem.ownerDocument || document ) ) {
+				eventPath.push( tmp.defaultView || tmp.parentWindow || window );
+			}
+		}
+
+		// Fire handlers on the event path
+		i = 0;
+		while ( ( cur = eventPath[ i++ ] ) && !event.isPropagationStopped() ) {
+
+			event.type = i > 1 ?
+				bubbleType :
+				special.bindType || type;
+
+			// jQuery handler
+			handle = ( dataPriv.get( cur, "events" ) || {} )[ event.type ] &&
+				dataPriv.get( cur, "handle" );
+			if ( handle ) {
+				handle.apply( cur, data );
+			}
+
+			// Native handler
+			handle = ontype && cur[ ontype ];
+			if ( handle && handle.apply && acceptData( cur ) ) {
+				event.result = handle.apply( cur, data );
+				if ( event.result === false ) {
+					event.preventDefault();
+				}
+			}
+		}
+		event.type = type;
+
+		// If nobody prevented the default action, do it now
+		if ( !onlyHandlers && !event.isDefaultPrevented() ) {
+
+			if ( ( !special._default ||
+				special._default.apply( eventPath.pop(), data ) === false ) &&
+				acceptData( elem ) ) {
+
+				// Call a native DOM method on the target with the same name name as the event.
+				// Don't do default actions on window, that's where global variables be (#6170)
+				if ( ontype && jQuery.isFunction( elem[ type ] ) && !jQuery.isWindow( elem ) ) {
+
+					// Don't re-trigger an onFOO event when we call its FOO() method
+					tmp = elem[ ontype ];
+
+					if ( tmp ) {
+						elem[ ontype ] = null;
+					}
+
+					// Prevent re-triggering of the same event, since we already bubbled it above
+					jQuery.event.triggered = type;
+					elem[ type ]();
+					jQuery.event.triggered = undefined;
+
+					if ( tmp ) {
+						elem[ ontype ] = tmp;
+					}
+				}
+			}
+		}
+
+		return event.result;
+	},
+
+	// Piggyback on a donor event to simulate a different one
+	// Used only for `focus(in | out)` events
+	simulate: function( type, elem, event ) {
+		var e = jQuery.extend(
+			new jQuery.Event(),
+			event,
+			{
+				type: type,
+				isSimulated: true
+			}
+		);
+
+		jQuery.event.trigger( e, null, elem );
+	}
+
+} );
+
+jQuery.fn.extend( {
+
+	trigger: function( type, data ) {
+		return this.each( function() {
+			jQuery.event.trigger( type, data, this );
+		} );
+	},
+	triggerHandler: function( type, data ) {
+		var elem = this[ 0 ];
+		if ( elem ) {
+			return jQuery.event.trigger( type, data, elem, true );
+		}
+	}
+} );
+
+
+jQuery.each( ( "blur focus focusin focusout load resize scroll unload click dblclick " +
 	"mousedown mouseup mousemove mouseover mouseout mouseenter mouseleave " +
-	"change select submit keydown keypress keyup error contextmenu").split(" "), function( i, name ) {
+	"change select submit keydown keypress keyup error contextmenu" ).split( " " ),
+	function( i, name ) {
 
 	// Handle event binding
 	jQuery.fn[ name ] = function( data, fn ) {
@@ -15326,33 +21607,66 @@ jQuery.each( ("blur focus focusin focusout load resize scroll unload click dblcl
 			this.on( name, null, data, fn ) :
 			this.trigger( name );
 	};
-});
+} );
 
-jQuery.fn.extend({
+jQuery.fn.extend( {
 	hover: function( fnOver, fnOut ) {
 		return this.mouseenter( fnOver ).mouseleave( fnOut || fnOver );
-	},
-
-	bind: function( types, data, fn ) {
-		return this.on( types, null, data, fn );
-	},
-	unbind: function( types, fn ) {
-		return this.off( types, null, fn );
-	},
-
-	delegate: function( selector, types, data, fn ) {
-		return this.on( types, selector, data, fn );
-	},
-	undelegate: function( selector, types, fn ) {
-		// ( namespace ) or ( selector, types [, fn] )
-		return arguments.length === 1 ? this.off( selector, "**" ) : this.off( types, selector || "**", fn );
 	}
-});
+} );
 
+
+
+
+support.focusin = "onfocusin" in window;
+
+
+// Support: Firefox
+// Firefox doesn't have focus(in | out) events
+// Related ticket - https://bugzilla.mozilla.org/show_bug.cgi?id=687787
+//
+// Support: Chrome, Safari
+// focus(in | out) events fire after focus & blur events,
+// which is spec violation - http://www.w3.org/TR/DOM-Level-3-Events/#events-focusevent-event-order
+// Related ticket - https://code.google.com/p/chromium/issues/detail?id=449857
+if ( !support.focusin ) {
+	jQuery.each( { focus: "focusin", blur: "focusout" }, function( orig, fix ) {
+
+		// Attach a single capturing handler on the document while someone wants focusin/focusout
+		var handler = function( event ) {
+			jQuery.event.simulate( fix, event.target, jQuery.event.fix( event ) );
+		};
+
+		jQuery.event.special[ fix ] = {
+			setup: function() {
+				var doc = this.ownerDocument || this,
+					attaches = dataPriv.access( doc, fix );
+
+				if ( !attaches ) {
+					doc.addEventListener( orig, handler, true );
+				}
+				dataPriv.access( doc, fix, ( attaches || 0 ) + 1 );
+			},
+			teardown: function() {
+				var doc = this.ownerDocument || this,
+					attaches = dataPriv.access( doc, fix ) - 1;
+
+				if ( !attaches ) {
+					doc.removeEventListener( orig, handler, true );
+					dataPriv.remove( doc, fix );
+
+				} else {
+					dataPriv.access( doc, fix, attaches );
+				}
+			}
+		};
+	} );
+}
+var location = window.location;
 
 var nonce = jQuery.now();
 
-var rquery = (/\?/);
+var rquery = ( /\?/ );
 
 
 
@@ -15365,15 +21679,14 @@ jQuery.parseJSON = function( data ) {
 
 // Cross-browser xml parsing
 jQuery.parseXML = function( data ) {
-	var xml, tmp;
+	var xml;
 	if ( !data || typeof data !== "string" ) {
 		return null;
 	}
 
 	// Support: IE9
 	try {
-		tmp = new DOMParser();
-		xml = tmp.parseFromString( data, "text/xml" );
+		xml = ( new window.DOMParser() ).parseFromString( data, "text/xml" );
 	} catch ( e ) {
 		xml = undefined;
 	}
@@ -15386,18 +21699,14 @@ jQuery.parseXML = function( data ) {
 
 
 var
-	// Document location
-	ajaxLocParts,
-	ajaxLocation,
-
 	rhash = /#.*$/,
 	rts = /([?&])_=[^&]*/,
 	rheaders = /^(.*?):[ \t]*([^\r\n]*)$/mg,
+
 	// #7653, #8125, #8152: local protocol detection
 	rlocalProtocol = /^(?:about|app|app-storage|.+-extension|file|res|widget):$/,
 	rnoContent = /^(?:GET|HEAD)$/,
 	rprotocol = /^\/\//,
-	rurl = /^([\w.+-]+:)(?:\/\/(?:[^\/?#]*@|)([^\/?#:]*)(?::(\d+)|)|)/,
 
 	/* Prefilters
 	 * 1) They are useful to introduce custom dataTypes (see ajax/jsonp.js for an example)
@@ -15418,22 +21727,11 @@ var
 	transports = {},
 
 	// Avoid comment-prolog char sequence (#10098); must appease lint and evade compression
-	allTypes = "*/".concat("*");
+	allTypes = "*/".concat( "*" ),
 
-// #8138, IE may throw an exception when accessing
-// a field from window.location if document.domain has been set
-try {
-	ajaxLocation = location.href;
-} catch( e ) {
-	// Use the href attribute of an A element
-	// since IE will modify it given document.location
-	ajaxLocation = document.createElement( "a" );
-	ajaxLocation.href = "";
-	ajaxLocation = ajaxLocation.href;
-}
-
-// Segment location into parts
-ajaxLocParts = rurl.exec( ajaxLocation.toLowerCase() ) || [];
+	// Anchor tag for parsing the document origin
+	originAnchor = document.createElement( "a" );
+	originAnchor.href = location.href;
 
 // Base "constructor" for jQuery.ajaxPrefilter and jQuery.ajaxTransport
 function addToPrefiltersOrTransports( structure ) {
@@ -15451,16 +21749,18 @@ function addToPrefiltersOrTransports( structure ) {
 			dataTypes = dataTypeExpression.toLowerCase().match( rnotwhite ) || [];
 
 		if ( jQuery.isFunction( func ) ) {
+
 			// For each dataType in the dataTypeExpression
-			while ( (dataType = dataTypes[i++]) ) {
+			while ( ( dataType = dataTypes[ i++ ] ) ) {
+
 				// Prepend if requested
-				if ( dataType[0] === "+" ) {
+				if ( dataType[ 0 ] === "+" ) {
 					dataType = dataType.slice( 1 ) || "*";
-					(structure[ dataType ] = structure[ dataType ] || []).unshift( func );
+					( structure[ dataType ] = structure[ dataType ] || [] ).unshift( func );
 
 				// Otherwise append
 				} else {
-					(structure[ dataType ] = structure[ dataType ] || []).push( func );
+					( structure[ dataType ] = structure[ dataType ] || [] ).push( func );
 				}
 			}
 		}
@@ -15478,14 +21778,16 @@ function inspectPrefiltersOrTransports( structure, options, originalOptions, jqX
 		inspected[ dataType ] = true;
 		jQuery.each( structure[ dataType ] || [], function( _, prefilterOrFactory ) {
 			var dataTypeOrTransport = prefilterOrFactory( options, originalOptions, jqXHR );
-			if ( typeof dataTypeOrTransport === "string" && !seekingTransport && !inspected[ dataTypeOrTransport ] ) {
+			if ( typeof dataTypeOrTransport === "string" &&
+				!seekingTransport && !inspected[ dataTypeOrTransport ] ) {
+
 				options.dataTypes.unshift( dataTypeOrTransport );
 				inspect( dataTypeOrTransport );
 				return false;
 			} else if ( seekingTransport ) {
 				return !( selected = dataTypeOrTransport );
 			}
-		});
+		} );
 		return selected;
 	}
 
@@ -15501,7 +21803,7 @@ function ajaxExtend( target, src ) {
 
 	for ( key in src ) {
 		if ( src[ key ] !== undefined ) {
-			( flatOptions[ key ] ? target : ( deep || (deep = {}) ) )[ key ] = src[ key ];
+			( flatOptions[ key ] ? target : ( deep || ( deep = {} ) ) )[ key ] = src[ key ];
 		}
 	}
 	if ( deep ) {
@@ -15525,7 +21827,7 @@ function ajaxHandleResponses( s, jqXHR, responses ) {
 	while ( dataTypes[ 0 ] === "*" ) {
 		dataTypes.shift();
 		if ( ct === undefined ) {
-			ct = s.mimeType || jqXHR.getResponseHeader("Content-Type");
+			ct = s.mimeType || jqXHR.getResponseHeader( "Content-Type" );
 		}
 	}
 
@@ -15543,9 +21845,10 @@ function ajaxHandleResponses( s, jqXHR, responses ) {
 	if ( dataTypes[ 0 ] in responses ) {
 		finalDataType = dataTypes[ 0 ];
 	} else {
+
 		// Try convertible dataTypes
 		for ( type in responses ) {
-			if ( !dataTypes[ 0 ] || s.converters[ type + " " + dataTypes[0] ] ) {
+			if ( !dataTypes[ 0 ] || s.converters[ type + " " + dataTypes[ 0 ] ] ) {
 				finalDataType = type;
 				break;
 			}
@@ -15553,6 +21856,7 @@ function ajaxHandleResponses( s, jqXHR, responses ) {
 				firstDataType = type;
 			}
 		}
+
 		// Or just use first one
 		finalDataType = finalDataType || firstDataType;
 	}
@@ -15574,6 +21878,7 @@ function ajaxHandleResponses( s, jqXHR, responses ) {
 function ajaxConvert( s, response, jqXHR, isSuccess ) {
 	var conv2, current, conv, tmp, prev,
 		converters = {},
+
 		// Work with a copy of dataTypes in case we need to modify it for conversion
 		dataTypes = s.dataTypes.slice();
 
@@ -15626,6 +21931,7 @@ function ajaxConvert( s, response, jqXHR, isSuccess ) {
 							conv = converters[ prev + " " + tmp[ 0 ] ] ||
 								converters[ "* " + tmp[ 0 ] ];
 							if ( conv ) {
+
 								// Condense equivalence converters
 								if ( conv === true ) {
 									conv = converters[ conv2 ];
@@ -15645,13 +21951,16 @@ function ajaxConvert( s, response, jqXHR, isSuccess ) {
 				if ( conv !== true ) {
 
 					// Unless errors are allowed to bubble, catch and return them
-					if ( conv && s[ "throws" ] ) {
+					if ( conv && s.throws ) {
 						response = conv( response );
 					} else {
 						try {
 							response = conv( response );
 						} catch ( e ) {
-							return { state: "parsererror", error: conv ? e : "No conversion from " + prev + " to " + current };
+							return {
+								state: "parsererror",
+								error: conv ? e : "No conversion from " + prev + " to " + current
+							};
 						}
 					}
 				}
@@ -15662,7 +21971,7 @@ function ajaxConvert( s, response, jqXHR, isSuccess ) {
 	return { state: "success", data: response };
 }
 
-jQuery.extend({
+jQuery.extend( {
 
 	// Counter for holding the number of active queries
 	active: 0,
@@ -15672,9 +21981,9 @@ jQuery.extend({
 	etag: {},
 
 	ajaxSettings: {
-		url: ajaxLocation,
+		url: location.href,
 		type: "GET",
-		isLocal: rlocalProtocol.test( ajaxLocParts[ 1 ] ),
+		isLocal: rlocalProtocol.test( location.protocol ),
 		global: true,
 		processData: true,
 		async: true,
@@ -15700,9 +22009,9 @@ jQuery.extend({
 		},
 
 		contents: {
-			xml: /xml/,
-			html: /html/,
-			json: /json/
+			xml: /\bxml\b/,
+			html: /\bhtml/,
+			json: /\bjson\b/
 		},
 
 		responseFields: {
@@ -15767,39 +22076,55 @@ jQuery.extend({
 		options = options || {};
 
 		var transport,
+
 			// URL without anti-cache param
 			cacheURL,
+
 			// Response headers
 			responseHeadersString,
 			responseHeaders,
+
 			// timeout handle
 			timeoutTimer,
-			// Cross-domain detection vars
-			parts,
+
+			// Url cleanup var
+			urlAnchor,
+
 			// To know if global events are to be dispatched
 			fireGlobals,
+
 			// Loop variable
 			i,
+
 			// Create the final options object
 			s = jQuery.ajaxSetup( {}, options ),
+
 			// Callbacks context
 			callbackContext = s.context || s,
+
 			// Context for global events is callbackContext if it is a DOM node or jQuery collection
-			globalEventContext = s.context && ( callbackContext.nodeType || callbackContext.jquery ) ?
-				jQuery( callbackContext ) :
-				jQuery.event,
+			globalEventContext = s.context &&
+				( callbackContext.nodeType || callbackContext.jquery ) ?
+					jQuery( callbackContext ) :
+					jQuery.event,
+
 			// Deferreds
 			deferred = jQuery.Deferred(),
-			completeDeferred = jQuery.Callbacks("once memory"),
+			completeDeferred = jQuery.Callbacks( "once memory" ),
+
 			// Status-dependent callbacks
 			statusCode = s.statusCode || {},
+
 			// Headers (they are sent all at once)
 			requestHeaders = {},
 			requestHeadersNames = {},
+
 			// The jqXHR state
 			state = 0,
+
 			// Default abort message
 			strAbort = "canceled",
+
 			// Fake xhr
 			jqXHR = {
 				readyState: 0,
@@ -15810,8 +22135,8 @@ jQuery.extend({
 					if ( state === 2 ) {
 						if ( !responseHeaders ) {
 							responseHeaders = {};
-							while ( (match = rheaders.exec( responseHeadersString )) ) {
-								responseHeaders[ match[1].toLowerCase() ] = match[ 2 ];
+							while ( ( match = rheaders.exec( responseHeadersString ) ) ) {
+								responseHeaders[ match[ 1 ].toLowerCase() ] = match[ 2 ];
 							}
 						}
 						match = responseHeaders[ key.toLowerCase() ];
@@ -15848,10 +22173,12 @@ jQuery.extend({
 					if ( map ) {
 						if ( state < 2 ) {
 							for ( code in map ) {
+
 								// Lazy-add the new callback in a way that preserves old ones
 								statusCode[ code ] = [ statusCode[ code ], map[ code ] ];
 							}
 						} else {
+
 							// Execute the appropriate callbacks
 							jqXHR.always( map[ jqXHR.status ] );
 						}
@@ -15879,8 +22206,8 @@ jQuery.extend({
 		// Add protocol if not provided (prefilters might expect it)
 		// Handle falsy url in the settings object (#10093: consistency with old signature)
 		// We also use the url parameter if available
-		s.url = ( ( url || s.url || ajaxLocation ) + "" ).replace( rhash, "" )
-			.replace( rprotocol, ajaxLocParts[ 1 ] + "//" );
+		s.url = ( ( url || s.url || location.href ) + "" ).replace( rhash, "" )
+			.replace( rprotocol, location.protocol + "//" );
 
 		// Alias method option to type as per ticket #12004
 		s.type = options.method || options.type || s.method || s.type;
@@ -15888,14 +22215,26 @@ jQuery.extend({
 		// Extract dataTypes list
 		s.dataTypes = jQuery.trim( s.dataType || "*" ).toLowerCase().match( rnotwhite ) || [ "" ];
 
-		// A cross-domain request is in order when we have a protocol:host:port mismatch
+		// A cross-domain request is in order when the origin doesn't match the current origin.
 		if ( s.crossDomain == null ) {
-			parts = rurl.exec( s.url.toLowerCase() );
-			s.crossDomain = !!( parts &&
-				( parts[ 1 ] !== ajaxLocParts[ 1 ] || parts[ 2 ] !== ajaxLocParts[ 2 ] ||
-					( parts[ 3 ] || ( parts[ 1 ] === "http:" ? "80" : "443" ) ) !==
-						( ajaxLocParts[ 3 ] || ( ajaxLocParts[ 1 ] === "http:" ? "80" : "443" ) ) )
-			);
+			urlAnchor = document.createElement( "a" );
+
+			// Support: IE8-11+
+			// IE throws exception if url is malformed, e.g. http://example.com:80x/
+			try {
+				urlAnchor.href = s.url;
+
+				// Support: IE8-11+
+				// Anchor's host property isn't correctly set when s.url is relative
+				urlAnchor.href = urlAnchor.href;
+				s.crossDomain = originAnchor.protocol + "//" + originAnchor.host !==
+					urlAnchor.protocol + "//" + urlAnchor.host;
+			} catch ( e ) {
+
+				// If there is an error parsing the URL, assume it is crossDomain,
+				// it can be rejected by the transport if it is invalid
+				s.crossDomain = true;
+			}
 		}
 
 		// Convert data if not already a string
@@ -15912,11 +22251,12 @@ jQuery.extend({
 		}
 
 		// We can fire global events as of now if asked to
-		fireGlobals = s.global;
+		// Don't fire events if jQuery.event is undefined in an AMD-usage scenario (#15118)
+		fireGlobals = jQuery.event && s.global;
 
 		// Watch for a new set of requests
 		if ( fireGlobals && jQuery.active++ === 0 ) {
-			jQuery.event.trigger("ajaxStart");
+			jQuery.event.trigger( "ajaxStart" );
 		}
 
 		// Uppercase the type
@@ -15935,6 +22275,7 @@ jQuery.extend({
 			// If data is available, append data to url
 			if ( s.data ) {
 				cacheURL = ( s.url += ( rquery.test( cacheURL ) ? "&" : "?" ) + s.data );
+
 				// #9682: remove data so that it's not used in an eventual retry
 				delete s.data;
 			}
@@ -15969,8 +22310,9 @@ jQuery.extend({
 		// Set the Accepts header for the server, depending on the dataType
 		jqXHR.setRequestHeader(
 			"Accept",
-			s.dataTypes[ 0 ] && s.accepts[ s.dataTypes[0] ] ?
-				s.accepts[ s.dataTypes[0] ] + ( s.dataTypes[ 0 ] !== "*" ? ", " + allTypes + "; q=0.01" : "" ) :
+			s.dataTypes[ 0 ] && s.accepts[ s.dataTypes[ 0 ] ] ?
+				s.accepts[ s.dataTypes[ 0 ] ] +
+					( s.dataTypes[ 0 ] !== "*" ? ", " + allTypes + "; q=0.01" : "" ) :
 				s.accepts[ "*" ]
 		);
 
@@ -15980,12 +22322,14 @@ jQuery.extend({
 		}
 
 		// Allow custom headers/mimetypes and early abort
-		if ( s.beforeSend && ( s.beforeSend.call( callbackContext, jqXHR, s ) === false || state === 2 ) ) {
+		if ( s.beforeSend &&
+			( s.beforeSend.call( callbackContext, jqXHR, s ) === false || state === 2 ) ) {
+
 			// Abort if not done already and return
 			return jqXHR.abort();
 		}
 
-		// aborting is no longer a cancellation
+		// Aborting is no longer a cancellation
 		strAbort = "abort";
 
 		// Install callbacks on deferreds
@@ -16006,10 +22350,16 @@ jQuery.extend({
 			if ( fireGlobals ) {
 				globalEventContext.trigger( "ajaxSend", [ jqXHR, s ] );
 			}
+
+			// If request was aborted inside ajaxSend, stop there
+			if ( state === 2 ) {
+				return jqXHR;
+			}
+
 			// Timeout
 			if ( s.async && s.timeout > 0 ) {
-				timeoutTimer = setTimeout(function() {
-					jqXHR.abort("timeout");
+				timeoutTimer = window.setTimeout( function() {
+					jqXHR.abort( "timeout" );
 				}, s.timeout );
 			}
 
@@ -16017,9 +22367,11 @@ jQuery.extend({
 				state = 1;
 				transport.send( requestHeaders, done );
 			} catch ( e ) {
+
 				// Propagate exception as error if not done
 				if ( state < 2 ) {
 					done( -1, e );
+
 				// Simply rethrow otherwise
 				} else {
 					throw e;
@@ -16042,7 +22394,7 @@ jQuery.extend({
 
 			// Clear timeout if it exists
 			if ( timeoutTimer ) {
-				clearTimeout( timeoutTimer );
+				window.clearTimeout( timeoutTimer );
 			}
 
 			// Dereference transport for early garbage collection
@@ -16071,11 +22423,11 @@ jQuery.extend({
 
 				// Set the If-Modified-Since and/or If-None-Match header, if in ifModified mode.
 				if ( s.ifModified ) {
-					modified = jqXHR.getResponseHeader("Last-Modified");
+					modified = jqXHR.getResponseHeader( "Last-Modified" );
 					if ( modified ) {
 						jQuery.lastModified[ cacheURL ] = modified;
 					}
-					modified = jqXHR.getResponseHeader("etag");
+					modified = jqXHR.getResponseHeader( "etag" );
 					if ( modified ) {
 						jQuery.etag[ cacheURL ] = modified;
 					}
@@ -16097,8 +22449,8 @@ jQuery.extend({
 					isSuccess = !error;
 				}
 			} else {
-				// We extract error from statusText
-				// then normalize statusText and status for non-aborts
+
+				// Extract error from statusText and normalize for non-aborts
 				error = statusText;
 				if ( status || !statusText ) {
 					statusText = "error";
@@ -16133,9 +22485,10 @@ jQuery.extend({
 
 			if ( fireGlobals ) {
 				globalEventContext.trigger( "ajaxComplete", [ jqXHR, s ] );
+
 				// Handle the global AJAX counter
 				if ( !( --jQuery.active ) ) {
-					jQuery.event.trigger("ajaxStop");
+					jQuery.event.trigger( "ajaxStop" );
 				}
 			}
 		}
@@ -16150,55 +22503,52 @@ jQuery.extend({
 	getScript: function( url, callback ) {
 		return jQuery.get( url, undefined, callback, "script" );
 	}
-});
+} );
 
 jQuery.each( [ "get", "post" ], function( i, method ) {
 	jQuery[ method ] = function( url, data, callback, type ) {
-		// shift arguments if data argument was omitted
+
+		// Shift arguments if data argument was omitted
 		if ( jQuery.isFunction( data ) ) {
 			type = type || callback;
 			callback = data;
 			data = undefined;
 		}
 
-		return jQuery.ajax({
+		// The url can be an options object (which then must have .url)
+		return jQuery.ajax( jQuery.extend( {
 			url: url,
 			type: method,
 			dataType: type,
 			data: data,
 			success: callback
-		});
+		}, jQuery.isPlainObject( url ) && url ) );
 	};
-});
-
-// Attach a bunch of functions for handling common AJAX events
-jQuery.each( [ "ajaxStart", "ajaxStop", "ajaxComplete", "ajaxError", "ajaxSuccess", "ajaxSend" ], function( i, type ) {
-	jQuery.fn[ type ] = function( fn ) {
-		return this.on( type, fn );
-	};
-});
+} );
 
 
 jQuery._evalUrl = function( url ) {
-	return jQuery.ajax({
+	return jQuery.ajax( {
 		url: url,
+
+		// Make this explicit, since user can override this through ajaxSetup (#11264)
 		type: "GET",
 		dataType: "script",
 		async: false,
 		global: false,
 		"throws": true
-	});
+	} );
 };
 
 
-jQuery.fn.extend({
+jQuery.fn.extend( {
 	wrapAll: function( html ) {
 		var wrap;
 
 		if ( jQuery.isFunction( html ) ) {
-			return this.each(function( i ) {
-				jQuery( this ).wrapAll( html.call(this, i) );
-			});
+			return this.each( function( i ) {
+				jQuery( this ).wrapAll( html.call( this, i ) );
+			} );
 		}
 
 		if ( this[ 0 ] ) {
@@ -16210,7 +22560,7 @@ jQuery.fn.extend({
 				wrap.insertBefore( this[ 0 ] );
 			}
 
-			wrap.map(function() {
+			wrap.map( function() {
 				var elem = this;
 
 				while ( elem.firstElementChild ) {
@@ -16218,7 +22568,7 @@ jQuery.fn.extend({
 				}
 
 				return elem;
-			}).append( this );
+			} ).append( this );
 		}
 
 		return this;
@@ -16226,12 +22576,12 @@ jQuery.fn.extend({
 
 	wrapInner: function( html ) {
 		if ( jQuery.isFunction( html ) ) {
-			return this.each(function( i ) {
-				jQuery( this ).wrapInner( html.call(this, i) );
-			});
+			return this.each( function( i ) {
+				jQuery( this ).wrapInner( html.call( this, i ) );
+			} );
 		}
 
-		return this.each(function() {
+		return this.each( function() {
 			var self = jQuery( this ),
 				contents = self.contents();
 
@@ -16241,34 +22591,37 @@ jQuery.fn.extend({
 			} else {
 				self.append( html );
 			}
-		});
+		} );
 	},
 
 	wrap: function( html ) {
 		var isFunction = jQuery.isFunction( html );
 
-		return this.each(function( i ) {
-			jQuery( this ).wrapAll( isFunction ? html.call(this, i) : html );
-		});
+		return this.each( function( i ) {
+			jQuery( this ).wrapAll( isFunction ? html.call( this, i ) : html );
+		} );
 	},
 
 	unwrap: function() {
-		return this.parent().each(function() {
+		return this.parent().each( function() {
 			if ( !jQuery.nodeName( this, "body" ) ) {
 				jQuery( this ).replaceWith( this.childNodes );
 			}
-		}).end();
+		} ).end();
 	}
-});
+} );
 
 
 jQuery.expr.filters.hidden = function( elem ) {
-	// Support: Opera <= 12.12
-	// Opera reports offsetWidths and offsetHeights less than zero on some elements
-	return elem.offsetWidth <= 0 && elem.offsetHeight <= 0;
+	return !jQuery.expr.filters.visible( elem );
 };
 jQuery.expr.filters.visible = function( elem ) {
-	return !jQuery.expr.filters.hidden( elem );
+
+	// Support: Opera <= 12.12
+	// Opera reports offsetWidths and offsetHeights less than zero on some elements
+	// Use OR instead of AND as the element is not visible if either is true
+	// See tickets #10406 and #13132
+	return elem.offsetWidth > 0 || elem.offsetHeight > 0 || elem.getClientRects().length > 0;
 };
 
 
@@ -16284,25 +22637,35 @@ function buildParams( prefix, obj, traditional, add ) {
 	var name;
 
 	if ( jQuery.isArray( obj ) ) {
+
 		// Serialize array item.
 		jQuery.each( obj, function( i, v ) {
 			if ( traditional || rbracket.test( prefix ) ) {
+
 				// Treat each array item as a scalar.
 				add( prefix, v );
 
 			} else {
+
 				// Item is non-scalar (array or object), encode its numeric index.
-				buildParams( prefix + "[" + ( typeof v === "object" ? i : "" ) + "]", v, traditional, add );
+				buildParams(
+					prefix + "[" + ( typeof v === "object" && v != null ? i : "" ) + "]",
+					v,
+					traditional,
+					add
+				);
 			}
-		});
+		} );
 
 	} else if ( !traditional && jQuery.type( obj ) === "object" ) {
+
 		// Serialize object item.
 		for ( name in obj ) {
 			buildParams( prefix + "[" + name + "]", obj[ name ], traditional, add );
 		}
 
 	} else {
+
 		// Serialize scalar item.
 		add( prefix, obj );
 	}
@@ -16314,6 +22677,7 @@ jQuery.param = function( a, traditional ) {
 	var prefix,
 		s = [],
 		add = function( key, value ) {
+
 			// If value is a function, invoke it and return its value
 			value = jQuery.isFunction( value ) ? value() : ( value == null ? "" : value );
 			s[ s.length ] = encodeURIComponent( key ) + "=" + encodeURIComponent( value );
@@ -16326,12 +22690,14 @@ jQuery.param = function( a, traditional ) {
 
 	// If an array was passed in, assume that it is an array of form elements.
 	if ( jQuery.isArray( a ) || ( a.jquery && !jQuery.isPlainObject( a ) ) ) {
+
 		// Serialize the form elements
 		jQuery.each( a, function() {
 			add( this.name, this.value );
-		});
+		} );
 
 	} else {
+
 		// If traditional, encode the "old" way (the way 1.3.2 or older
 		// did it), otherwise encode params recursively.
 		for ( prefix in a ) {
@@ -16343,25 +22709,26 @@ jQuery.param = function( a, traditional ) {
 	return s.join( "&" ).replace( r20, "+" );
 };
 
-jQuery.fn.extend({
+jQuery.fn.extend( {
 	serialize: function() {
 		return jQuery.param( this.serializeArray() );
 	},
 	serializeArray: function() {
-		return this.map(function() {
+		return this.map( function() {
+
 			// Can add propHook for "elements" to filter or add form elements
 			var elements = jQuery.prop( this, "elements" );
 			return elements ? jQuery.makeArray( elements ) : this;
-		})
-		.filter(function() {
+		} )
+		.filter( function() {
 			var type = this.type;
 
 			// Use .is( ":disabled" ) so that fieldset[disabled] works
 			return this.name && !jQuery( this ).is( ":disabled" ) &&
 				rsubmittable.test( this.nodeName ) && !rsubmitterTypes.test( type ) &&
 				( this.checked || !rcheckableType.test( type ) );
-		})
-		.map(function( i, elem ) {
+		} )
+		.map( function( i, elem ) {
 			var val = jQuery( this ).val();
 
 			return val == null ?
@@ -16369,55 +22736,50 @@ jQuery.fn.extend({
 				jQuery.isArray( val ) ?
 					jQuery.map( val, function( val ) {
 						return { name: elem.name, value: val.replace( rCRLF, "\r\n" ) };
-					}) :
+					} ) :
 					{ name: elem.name, value: val.replace( rCRLF, "\r\n" ) };
-		}).get();
+		} ).get();
 	}
-});
+} );
 
 
 jQuery.ajaxSettings.xhr = function() {
 	try {
-		return new XMLHttpRequest();
-	} catch( e ) {}
+		return new window.XMLHttpRequest();
+	} catch ( e ) {}
 };
 
-var xhrId = 0,
-	xhrCallbacks = {},
-	xhrSuccessStatus = {
-		// file protocol always yields status code 0, assume 200
+var xhrSuccessStatus = {
+
+		// File protocol always yields status code 0, assume 200
 		0: 200,
+
 		// Support: IE9
 		// #1450: sometimes IE returns 1223 when it should be 204
 		1223: 204
 	},
 	xhrSupported = jQuery.ajaxSettings.xhr();
 
-// Support: IE9
-// Open requests must be manually aborted on unload (#5280)
-if ( window.ActiveXObject ) {
-	jQuery( window ).on( "unload", function() {
-		for ( var key in xhrCallbacks ) {
-			xhrCallbacks[ key ]();
-		}
-	});
-}
-
 support.cors = !!xhrSupported && ( "withCredentials" in xhrSupported );
 support.ajax = xhrSupported = !!xhrSupported;
 
-jQuery.ajaxTransport(function( options ) {
-	var callback;
+jQuery.ajaxTransport( function( options ) {
+	var callback, errorCallback;
 
 	// Cross domain only allowed if supported through XMLHttpRequest
 	if ( support.cors || xhrSupported && !options.crossDomain ) {
 		return {
 			send: function( headers, complete ) {
 				var i,
-					xhr = options.xhr(),
-					id = ++xhrId;
+					xhr = options.xhr();
 
-				xhr.open( options.type, options.url, options.async, options.username, options.password );
+				xhr.open(
+					options.type,
+					options.url,
+					options.async,
+					options.username,
+					options.password
+				);
 
 				// Apply custom fields if provided
 				if ( options.xhrFields ) {
@@ -16436,8 +22798,8 @@ jQuery.ajaxTransport(function( options ) {
 				// akin to a jigsaw puzzle, we simply never set it to be sure.
 				// (it can always be set on a per-request basis or even using ajaxSetup)
 				// For same-domain requests, won't change header if already provided.
-				if ( !options.crossDomain && !headers["X-Requested-With"] ) {
-					headers["X-Requested-With"] = "XMLHttpRequest";
+				if ( !options.crossDomain && !headers[ "X-Requested-With" ] ) {
+					headers[ "X-Requested-With" ] = "XMLHttpRequest";
 				}
 
 				// Set headers
@@ -16449,27 +22811,38 @@ jQuery.ajaxTransport(function( options ) {
 				callback = function( type ) {
 					return function() {
 						if ( callback ) {
-							delete xhrCallbacks[ id ];
-							callback = xhr.onload = xhr.onerror = null;
+							callback = errorCallback = xhr.onload =
+								xhr.onerror = xhr.onabort = xhr.onreadystatechange = null;
 
 							if ( type === "abort" ) {
 								xhr.abort();
 							} else if ( type === "error" ) {
-								complete(
-									// file: protocol always yields status 0; see #8605, #14207
-									xhr.status,
-									xhr.statusText
-								);
+
+								// Support: IE9
+								// On a manual native abort, IE9 throws
+								// errors on any property access that is not readyState
+								if ( typeof xhr.status !== "number" ) {
+									complete( 0, "error" );
+								} else {
+									complete(
+
+										// File: protocol always yields status 0; see #8605, #14207
+										xhr.status,
+										xhr.statusText
+									);
+								}
 							} else {
 								complete(
 									xhrSuccessStatus[ xhr.status ] || xhr.status,
 									xhr.statusText,
-									// Support: IE9
-									// Accessing binary-data responseText throws an exception
-									// (#11426)
-									typeof xhr.responseText === "string" ? {
-										text: xhr.responseText
-									} : undefined,
+
+									// Support: IE9 only
+									// IE9 has no XHR2 but throws on binary (trac-11426)
+									// For XHR2 non-text, let the caller handle it (gh-2498)
+									( xhr.responseType || "text" ) !== "text"  ||
+									typeof xhr.responseText !== "string" ?
+										{ binary: xhr.response } :
+										{ text: xhr.responseText },
 									xhr.getAllResponseHeaders()
 								);
 							}
@@ -16479,15 +22852,41 @@ jQuery.ajaxTransport(function( options ) {
 
 				// Listen to events
 				xhr.onload = callback();
-				xhr.onerror = callback("error");
+				errorCallback = xhr.onerror = callback( "error" );
+
+				// Support: IE9
+				// Use onreadystatechange to replace onabort
+				// to handle uncaught aborts
+				if ( xhr.onabort !== undefined ) {
+					xhr.onabort = errorCallback;
+				} else {
+					xhr.onreadystatechange = function() {
+
+						// Check readyState before timeout as it changes
+						if ( xhr.readyState === 4 ) {
+
+							// Allow onerror to be called first,
+							// but that will not handle a native abort
+							// Also, save errorCallback to a variable
+							// as xhr.onerror cannot be accessed
+							window.setTimeout( function() {
+								if ( callback ) {
+									errorCallback();
+								}
+							} );
+						}
+					};
+				}
 
 				// Create the abort callback
-				callback = xhrCallbacks[ id ] = callback("abort");
+				callback = callback( "abort" );
 
 				try {
+
 					// Do send the request (this may raise an exception)
 					xhr.send( options.hasContent && options.data || null );
 				} catch ( e ) {
+
 					// #14683: Only rethrow if this hasn't been notified as an error yet
 					if ( callback ) {
 						throw e;
@@ -16502,18 +22901,19 @@ jQuery.ajaxTransport(function( options ) {
 			}
 		};
 	}
-});
+} );
 
 
 
 
 // Install script dataType
-jQuery.ajaxSetup({
+jQuery.ajaxSetup( {
 	accepts: {
-		script: "text/javascript, application/javascript, application/ecmascript, application/x-ecmascript"
+		script: "text/javascript, application/javascript, " +
+			"application/ecmascript, application/x-ecmascript"
 	},
 	contents: {
-		script: /(?:java|ecma)script/
+		script: /\b(?:java|ecma)script\b/
 	},
 	converters: {
 		"text script": function( text ) {
@@ -16521,7 +22921,7 @@ jQuery.ajaxSetup({
 			return text;
 		}
 	}
-});
+} );
 
 // Handle cache's special case and crossDomain
 jQuery.ajaxPrefilter( "script", function( s ) {
@@ -16531,20 +22931,20 @@ jQuery.ajaxPrefilter( "script", function( s ) {
 	if ( s.crossDomain ) {
 		s.type = "GET";
 	}
-});
+} );
 
 // Bind script tag hack transport
 jQuery.ajaxTransport( "script", function( s ) {
+
 	// This transport only deals with cross domain requests
 	if ( s.crossDomain ) {
 		var script, callback;
 		return {
 			send: function( _, complete ) {
-				script = jQuery("<script>").prop({
-					async: true,
+				script = jQuery( "<script>" ).prop( {
 					charset: s.scriptCharset,
 					src: s.url
-				}).on(
+				} ).on(
 					"load error",
 					callback = function( evt ) {
 						script.remove();
@@ -16554,6 +22954,8 @@ jQuery.ajaxTransport( "script", function( s ) {
 						}
 					}
 				);
+
+				// Use native DOM manipulation to avoid our domManip AJAX trickery
 				document.head.appendChild( script[ 0 ] );
 			},
 			abort: function() {
@@ -16563,7 +22965,7 @@ jQuery.ajaxTransport( "script", function( s ) {
 			}
 		};
 	}
-});
+} );
 
 
 
@@ -16572,14 +22974,14 @@ var oldCallbacks = [],
 	rjsonp = /(=)\?(?=&|$)|\?\?/;
 
 // Default jsonp settings
-jQuery.ajaxSetup({
+jQuery.ajaxSetup( {
 	jsonp: "callback",
 	jsonpCallback: function() {
 		var callback = oldCallbacks.pop() || ( jQuery.expando + "_" + ( nonce++ ) );
 		this[ callback ] = true;
 		return callback;
 	}
-});
+} );
 
 // Detect, normalize options and install callbacks for jsonp requests
 jQuery.ajaxPrefilter( "json jsonp", function( s, originalSettings, jqXHR ) {
@@ -16587,7 +22989,10 @@ jQuery.ajaxPrefilter( "json jsonp", function( s, originalSettings, jqXHR ) {
 	var callbackName, overwritten, responseContainer,
 		jsonProp = s.jsonp !== false && ( rjsonp.test( s.url ) ?
 			"url" :
-			typeof s.data === "string" && !( s.contentType || "" ).indexOf("application/x-www-form-urlencoded") && rjsonp.test( s.data ) && "data"
+			typeof s.data === "string" &&
+				( s.contentType || "" )
+					.indexOf( "application/x-www-form-urlencoded" ) === 0 &&
+				rjsonp.test( s.data ) && "data"
 		);
 
 	// Handle iff the expected data type is "jsonp" or we have a parameter to set
@@ -16606,14 +23011,14 @@ jQuery.ajaxPrefilter( "json jsonp", function( s, originalSettings, jqXHR ) {
 		}
 
 		// Use data converter to retrieve json after script execution
-		s.converters["script json"] = function() {
+		s.converters[ "script json" ] = function() {
 			if ( !responseContainer ) {
 				jQuery.error( callbackName + " was not called" );
 			}
 			return responseContainer[ 0 ];
 		};
 
-		// force json dataType
+		// Force json dataType
 		s.dataTypes[ 0 ] = "json";
 
 		// Install callback
@@ -16623,16 +23028,24 @@ jQuery.ajaxPrefilter( "json jsonp", function( s, originalSettings, jqXHR ) {
 		};
 
 		// Clean-up function (fires after converters)
-		jqXHR.always(function() {
-			// Restore preexisting value
-			window[ callbackName ] = overwritten;
+		jqXHR.always( function() {
+
+			// If previous value didn't exist - remove it
+			if ( overwritten === undefined ) {
+				jQuery( window ).removeProp( callbackName );
+
+			// Otherwise restore preexisting value
+			} else {
+				window[ callbackName ] = overwritten;
+			}
 
 			// Save back as free
 			if ( s[ callbackName ] ) {
-				// make sure that re-using the options doesn't screw things around
+
+				// Make sure that re-using the options doesn't screw things around
 				s.jsonpCallback = originalSettings.jsonpCallback;
 
-				// save the callback name for future use
+				// Save the callback name for future use
 				oldCallbacks.push( callbackName );
 			}
 
@@ -16642,18 +23055,19 @@ jQuery.ajaxPrefilter( "json jsonp", function( s, originalSettings, jqXHR ) {
 			}
 
 			responseContainer = overwritten = undefined;
-		});
+		} );
 
 		// Delegate to script
 		return "script";
 	}
-});
+} );
 
 
 
 
-// data: string of html
-// context (optional): If specified, the fragment will be created in this context, defaults to document
+// Argument "data" should be string of html
+// context (optional): If specified, the fragment will be created in this context,
+// defaults to document
 // keepScripts (optional): If true, will include scripts passed in the html string
 jQuery.parseHTML = function( data, context, keepScripts ) {
 	if ( !data || typeof data !== "string" ) {
@@ -16670,10 +23084,10 @@ jQuery.parseHTML = function( data, context, keepScripts ) {
 
 	// Single tag
 	if ( parsed ) {
-		return [ context.createElement( parsed[1] ) ];
+		return [ context.createElement( parsed[ 1 ] ) ];
 	}
 
-	parsed = jQuery.buildFragment( [ data ], context, scripts );
+	parsed = buildFragment( [ data ], context, scripts );
 
 	if ( scripts && scripts.length ) {
 		jQuery( scripts ).remove();
@@ -16696,9 +23110,9 @@ jQuery.fn.load = function( url, params, callback ) {
 
 	var selector, type, response,
 		self = this,
-		off = url.indexOf(" ");
+		off = url.indexOf( " " );
 
-	if ( off >= 0 ) {
+	if ( off > -1 ) {
 		selector = jQuery.trim( url.slice( off ) );
 		url = url.slice( 0, off );
 	}
@@ -16717,14 +23131,16 @@ jQuery.fn.load = function( url, params, callback ) {
 
 	// If we have elements to modify, make the request
 	if ( self.length > 0 ) {
-		jQuery.ajax({
+		jQuery.ajax( {
 			url: url,
 
-			// if "type" variable is undefined, then "GET" method will be used
-			type: type,
+			// If "type" variable is undefined, then "GET" method will be used.
+			// Make value of this field explicit since
+			// user can override it through ajaxSetup method
+			type: type || "GET",
 			dataType: "html",
 			data: params
-		}).done(function( responseText ) {
+		} ).done( function( responseText ) {
 
 			// Save response for use in complete callback
 			response = arguments;
@@ -16733,14 +23149,19 @@ jQuery.fn.load = function( url, params, callback ) {
 
 				// If a selector was specified, locate the right elements in a dummy div
 				// Exclude scripts to avoid IE 'Permission Denied' errors
-				jQuery("<div>").append( jQuery.parseHTML( responseText ) ).find( selector ) :
+				jQuery( "<div>" ).append( jQuery.parseHTML( responseText ) ).find( selector ) :
 
 				// Otherwise use the full result
 				responseText );
 
-		}).complete( callback && function( jqXHR, status ) {
-			self.each( callback, response || [ jqXHR.responseText, status, jqXHR ] );
-		});
+		// If the request succeeds, this function gets "data", "status", "jqXHR"
+		// but they are ignored because response was set above.
+		// If it fails, this function gets "jqXHR", "status", "error"
+		} ).always( callback && function( jqXHR, status ) {
+			self.each( function() {
+				callback.apply( this, response || [ jqXHR.responseText, status, jqXHR ] );
+			} );
+		} );
 	}
 
 	return this;
@@ -16749,16 +23170,31 @@ jQuery.fn.load = function( url, params, callback ) {
 
 
 
+// Attach a bunch of functions for handling common AJAX events
+jQuery.each( [
+	"ajaxStart",
+	"ajaxStop",
+	"ajaxComplete",
+	"ajaxError",
+	"ajaxSuccess",
+	"ajaxSend"
+], function( i, type ) {
+	jQuery.fn[ type ] = function( fn ) {
+		return this.on( type, fn );
+	};
+} );
+
+
+
+
 jQuery.expr.filters.animated = function( elem ) {
-	return jQuery.grep(jQuery.timers, function( fn ) {
+	return jQuery.grep( jQuery.timers, function( fn ) {
 		return elem === fn.elem;
-	}).length;
+	} ).length;
 };
 
 
 
-
-var docElem = window.document.documentElement;
 
 /**
  * Gets a window from an element
@@ -16783,9 +23219,10 @@ jQuery.offset = {
 		curCSSTop = jQuery.css( elem, "top" );
 		curCSSLeft = jQuery.css( elem, "left" );
 		calculatePosition = ( position === "absolute" || position === "fixed" ) &&
-			( curCSSTop + curCSSLeft ).indexOf("auto") > -1;
+			( curCSSTop + curCSSLeft ).indexOf( "auto" ) > -1;
 
-		// Need to be able to calculate position if either top or left is auto and position is either absolute or fixed
+		// Need to be able to calculate position if either
+		// top or left is auto and position is either absolute or fixed
 		if ( calculatePosition ) {
 			curPosition = curElem.position();
 			curTop = curPosition.top;
@@ -16797,7 +23234,9 @@ jQuery.offset = {
 		}
 
 		if ( jQuery.isFunction( options ) ) {
-			options = options.call( elem, i, curOffset );
+
+			// Use jQuery.extend here to allow modification of coordinates argument (gh-1848)
+			options = options.call( elem, i, jQuery.extend( {}, curOffset ) );
 		}
 
 		if ( options.top != null ) {
@@ -16816,14 +23255,14 @@ jQuery.offset = {
 	}
 };
 
-jQuery.fn.extend({
+jQuery.fn.extend( {
 	offset: function( options ) {
 		if ( arguments.length ) {
 			return options === undefined ?
 				this :
-				this.each(function( i ) {
+				this.each( function( i ) {
 					jQuery.offset.setOffset( this, options, i );
-				});
+				} );
 		}
 
 		var docElem, win,
@@ -16842,11 +23281,7 @@ jQuery.fn.extend({
 			return box;
 		}
 
-		// If we don't have gBCR, just use 0,0 rather than error
-		// BlackBerry 5, iOS 3 (original iPhone)
-		if ( typeof elem.getBoundingClientRect !== strundefined ) {
-			box = elem.getBoundingClientRect();
-		}
+		box = elem.getBoundingClientRect();
 		win = getWindow( doc );
 		return {
 			top: box.top + win.pageYOffset - docElem.clientTop,
@@ -16863,12 +23298,15 @@ jQuery.fn.extend({
 			elem = this[ 0 ],
 			parentOffset = { top: 0, left: 0 };
 
-		// Fixed elements are offset from window (parentOffset = {top:0, left: 0}, because it is its only offset parent
+		// Fixed elements are offset from window (parentOffset = {top:0, left: 0},
+		// because it is its only offset parent
 		if ( jQuery.css( elem, "position" ) === "fixed" ) {
-			// We assume that getBoundingClientRect is available when computed position is fixed
+
+			// Assume getBoundingClientRect is there when computed position is fixed
 			offset = elem.getBoundingClientRect();
 
 		} else {
+
 			// Get *real* offsetParent
 			offsetParent = this.offsetParent();
 
@@ -16890,18 +23328,28 @@ jQuery.fn.extend({
 		};
 	},
 
+	// This method will return documentElement in the following cases:
+	// 1) For the element inside the iframe without offsetParent, this method will return
+	//    documentElement of the parent window
+	// 2) For the hidden or detached element
+	// 3) For body or html element, i.e. in case of the html node - it will return itself
+	//
+	// but those exceptions were never presented as a real life use-cases
+	// and might be considered as more preferable results.
+	//
+	// This logic, however, is not guaranteed and can change at any point in the future
 	offsetParent: function() {
-		return this.map(function() {
-			var offsetParent = this.offsetParent || docElem;
+		return this.map( function() {
+			var offsetParent = this.offsetParent;
 
-			while ( offsetParent && ( !jQuery.nodeName( offsetParent, "html" ) && jQuery.css( offsetParent, "position" ) === "static" ) ) {
+			while ( offsetParent && jQuery.css( offsetParent, "position" ) === "static" ) {
 				offsetParent = offsetParent.offsetParent;
 			}
 
-			return offsetParent || docElem;
-		});
+			return offsetParent || documentElement;
+		} );
 	}
-});
+} );
 
 // Create scrollLeft and scrollTop methods
 jQuery.each( { scrollLeft: "pageXOffset", scrollTop: "pageYOffset" }, function( method, prop ) {
@@ -16917,40 +23365,45 @@ jQuery.each( { scrollLeft: "pageXOffset", scrollTop: "pageYOffset" }, function( 
 
 			if ( win ) {
 				win.scrollTo(
-					!top ? val : window.pageXOffset,
-					top ? val : window.pageYOffset
+					!top ? val : win.pageXOffset,
+					top ? val : win.pageYOffset
 				);
 
 			} else {
 				elem[ method ] = val;
 			}
-		}, method, val, arguments.length, null );
+		}, method, val, arguments.length );
 	};
-});
+} );
 
+// Support: Safari<7-8+, Chrome<37-44+
 // Add the top/left cssHooks using jQuery.fn.position
 // Webkit bug: https://bugs.webkit.org/show_bug.cgi?id=29084
-// getComputedStyle returns percent when specified for top/left/bottom/right
-// rather than make the css module depend on the offset module, we just check for it here
+// Blink bug: https://code.google.com/p/chromium/issues/detail?id=229280
+// getComputedStyle returns percent when specified for top/left/bottom/right;
+// rather than make the css module depend on the offset module, just check for it here
 jQuery.each( [ "top", "left" ], function( i, prop ) {
 	jQuery.cssHooks[ prop ] = addGetHookIf( support.pixelPosition,
 		function( elem, computed ) {
 			if ( computed ) {
 				computed = curCSS( elem, prop );
-				// if curCSS returns percentage, fallback to offset
+
+				// If curCSS returns percentage, fallback to offset
 				return rnumnonpx.test( computed ) ?
 					jQuery( elem ).position()[ prop ] + "px" :
 					computed;
 			}
 		}
 	);
-});
+} );
 
 
 // Create innerHeight, innerWidth, height, width, outerHeight and outerWidth methods
 jQuery.each( { Height: "height", Width: "width" }, function( name, type ) {
-	jQuery.each( { padding: "inner" + name, content: type, "": "outer" + name }, function( defaultExtra, funcName ) {
-		// margin is only for outerHeight, outerWidth
+	jQuery.each( { padding: "inner" + name, content: type, "": "outer" + name },
+		function( defaultExtra, funcName ) {
+
+		// Margin is only for outerHeight, outerWidth
 		jQuery.fn[ funcName ] = function( margin, value ) {
 			var chainable = arguments.length && ( defaultExtra || typeof margin !== "boolean" ),
 				extra = defaultExtra || ( margin === true || value === true ? "margin" : "border" );
@@ -16959,6 +23412,7 @@ jQuery.each( { Height: "height", Width: "width" }, function( name, type ) {
 				var doc;
 
 				if ( jQuery.isWindow( elem ) ) {
+
 					// As of 5/8/2012 this will yield incorrect results for Mobile Safari, but there
 					// isn't a whole lot we can do. See pull request at this URL for discussion:
 					// https://github.com/jquery/jquery/pull/764
@@ -16979,6 +23433,7 @@ jQuery.each( { Height: "height", Width: "width" }, function( name, type ) {
 				}
 
 				return value === undefined ?
+
 					// Get width or height on the element, requesting but not forcing parseFloat
 					jQuery.css( elem, type, extra ) :
 
@@ -16986,14 +23441,33 @@ jQuery.each( { Height: "height", Width: "width" }, function( name, type ) {
 					jQuery.style( elem, type, value, extra );
 			}, type, chainable ? margin : undefined, chainable, null );
 		};
-	});
-});
+	} );
+} );
 
 
-// The number of elements contained in the matched element set
-jQuery.fn.size = function() {
-	return this.length;
-};
+jQuery.fn.extend( {
+
+	bind: function( types, data, fn ) {
+		return this.on( types, null, data, fn );
+	},
+	unbind: function( types, fn ) {
+		return this.off( types, null, fn );
+	},
+
+	delegate: function( selector, types, data, fn ) {
+		return this.on( types, selector, data, fn );
+	},
+	undelegate: function( selector, types, fn ) {
+
+		// ( namespace ) or ( selector, types [, fn] )
+		return arguments.length === 1 ?
+			this.off( selector, "**" ) :
+			this.off( types, selector || "**", fn );
+	},
+	size: function() {
+		return this.length;
+	}
+} );
 
 jQuery.fn.andSelf = jQuery.fn.addBack;
 
@@ -17016,13 +23490,13 @@ jQuery.fn.andSelf = jQuery.fn.addBack;
 if ( typeof define === "function" && define.amd ) {
 	define( "jquery", [], function() {
 		return jQuery;
-	});
+	} );
 }
 
 
 
-
 var
+
 	// Map over jQuery in case of overwrite
 	_jQuery = window.jQuery,
 
@@ -17041,24 +23515,20 @@ jQuery.noConflict = function( deep ) {
 	return jQuery;
 };
 
-// Expose jQuery and $ identifiers, even in
-// AMD (#7102#comment:10, https://github.com/jquery/jquery/pull/557)
+// Expose jQuery and $ identifiers, even in AMD
+// (#7102#comment:10, https://github.com/jquery/jquery/pull/557)
 // and CommonJS for browser emulators (#13566)
-if ( typeof noGlobal === strundefined ) {
+if ( !noGlobal ) {
 	window.jQuery = window.$ = jQuery;
 }
 
-
-
-
 return jQuery;
-
 }));
 
-},{}],96:[function(require,module,exports){
-//     Underscore.js 1.7.0
+},{}],141:[function(require,module,exports){
+//     Underscore.js 1.8.3
 //     http://underscorejs.org
-//     (c) 2009-2014 Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
+//     (c) 2009-2015 Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
 //     Underscore may be freely distributed under the MIT license.
 
 (function() {
@@ -17079,7 +23549,6 @@ return jQuery;
   var
     push             = ArrayProto.push,
     slice            = ArrayProto.slice,
-    concat           = ArrayProto.concat,
     toString         = ObjProto.toString,
     hasOwnProperty   = ObjProto.hasOwnProperty;
 
@@ -17088,7 +23557,11 @@ return jQuery;
   var
     nativeIsArray      = Array.isArray,
     nativeKeys         = Object.keys,
-    nativeBind         = FuncProto.bind;
+    nativeBind         = FuncProto.bind,
+    nativeCreate       = Object.create;
+
+  // Naked function reference for surrogate-prototype-swapping.
+  var Ctor = function(){};
 
   // Create a safe reference to the Underscore object for use below.
   var _ = function(obj) {
@@ -17110,12 +23583,12 @@ return jQuery;
   }
 
   // Current version.
-  _.VERSION = '1.7.0';
+  _.VERSION = '1.8.3';
 
   // Internal function that returns an efficient (for current engines) version
   // of the passed-in callback, to be repeatedly applied in other Underscore
   // functions.
-  var createCallback = function(func, context, argCount) {
+  var optimizeCb = function(func, context, argCount) {
     if (context === void 0) return func;
     switch (argCount == null ? 3 : argCount) {
       case 1: return function(value) {
@@ -17139,11 +23612,59 @@ return jQuery;
   // A mostly-internal function to generate callbacks that can be applied
   // to each element in a collection, returning the desired result — either
   // identity, an arbitrary callback, a property matcher, or a property accessor.
-  _.iteratee = function(value, context, argCount) {
+  var cb = function(value, context, argCount) {
     if (value == null) return _.identity;
-    if (_.isFunction(value)) return createCallback(value, context, argCount);
-    if (_.isObject(value)) return _.matches(value);
+    if (_.isFunction(value)) return optimizeCb(value, context, argCount);
+    if (_.isObject(value)) return _.matcher(value);
     return _.property(value);
+  };
+  _.iteratee = function(value, context) {
+    return cb(value, context, Infinity);
+  };
+
+  // An internal function for creating assigner functions.
+  var createAssigner = function(keysFunc, undefinedOnly) {
+    return function(obj) {
+      var length = arguments.length;
+      if (length < 2 || obj == null) return obj;
+      for (var index = 1; index < length; index++) {
+        var source = arguments[index],
+            keys = keysFunc(source),
+            l = keys.length;
+        for (var i = 0; i < l; i++) {
+          var key = keys[i];
+          if (!undefinedOnly || obj[key] === void 0) obj[key] = source[key];
+        }
+      }
+      return obj;
+    };
+  };
+
+  // An internal function for creating a new object that inherits from another.
+  var baseCreate = function(prototype) {
+    if (!_.isObject(prototype)) return {};
+    if (nativeCreate) return nativeCreate(prototype);
+    Ctor.prototype = prototype;
+    var result = new Ctor;
+    Ctor.prototype = null;
+    return result;
+  };
+
+  var property = function(key) {
+    return function(obj) {
+      return obj == null ? void 0 : obj[key];
+    };
+  };
+
+  // Helper for collection methods to determine whether a collection
+  // should be iterated as an array or as an object
+  // Related: http://people.mozilla.org/~jorendorff/es6-draft.html#sec-tolength
+  // Avoids a very nasty iOS 8 JIT bug on ARM-64. #2094
+  var MAX_ARRAY_INDEX = Math.pow(2, 53) - 1;
+  var getLength = property('length');
+  var isArrayLike = function(collection) {
+    var length = getLength(collection);
+    return typeof length == 'number' && length >= 0 && length <= MAX_ARRAY_INDEX;
   };
 
   // Collection Functions
@@ -17153,11 +23674,10 @@ return jQuery;
   // Handles raw objects in addition to array-likes. Treats all
   // sparse array-likes as if they were dense.
   _.each = _.forEach = function(obj, iteratee, context) {
-    if (obj == null) return obj;
-    iteratee = createCallback(iteratee, context);
-    var i, length = obj.length;
-    if (length === +length) {
-      for (i = 0; i < length; i++) {
+    iteratee = optimizeCb(iteratee, context);
+    var i, length;
+    if (isArrayLike(obj)) {
+      for (i = 0, length = obj.length; i < length; i++) {
         iteratee(obj[i], i, obj);
       }
     } else {
@@ -17171,77 +23691,66 @@ return jQuery;
 
   // Return the results of applying the iteratee to each element.
   _.map = _.collect = function(obj, iteratee, context) {
-    if (obj == null) return [];
-    iteratee = _.iteratee(iteratee, context);
-    var keys = obj.length !== +obj.length && _.keys(obj),
+    iteratee = cb(iteratee, context);
+    var keys = !isArrayLike(obj) && _.keys(obj),
         length = (keys || obj).length,
-        results = Array(length),
-        currentKey;
+        results = Array(length);
     for (var index = 0; index < length; index++) {
-      currentKey = keys ? keys[index] : index;
+      var currentKey = keys ? keys[index] : index;
       results[index] = iteratee(obj[currentKey], currentKey, obj);
     }
     return results;
   };
 
-  var reduceError = 'Reduce of empty array with no initial value';
+  // Create a reducing function iterating left or right.
+  function createReduce(dir) {
+    // Optimized iterator function as using arguments.length
+    // in the main function will deoptimize the, see #1991.
+    function iterator(obj, iteratee, memo, keys, index, length) {
+      for (; index >= 0 && index < length; index += dir) {
+        var currentKey = keys ? keys[index] : index;
+        memo = iteratee(memo, obj[currentKey], currentKey, obj);
+      }
+      return memo;
+    }
+
+    return function(obj, iteratee, memo, context) {
+      iteratee = optimizeCb(iteratee, context, 4);
+      var keys = !isArrayLike(obj) && _.keys(obj),
+          length = (keys || obj).length,
+          index = dir > 0 ? 0 : length - 1;
+      // Determine the initial value if none is provided.
+      if (arguments.length < 3) {
+        memo = obj[keys ? keys[index] : index];
+        index += dir;
+      }
+      return iterator(obj, iteratee, memo, keys, index, length);
+    };
+  }
 
   // **Reduce** builds up a single result from a list of values, aka `inject`,
   // or `foldl`.
-  _.reduce = _.foldl = _.inject = function(obj, iteratee, memo, context) {
-    if (obj == null) obj = [];
-    iteratee = createCallback(iteratee, context, 4);
-    var keys = obj.length !== +obj.length && _.keys(obj),
-        length = (keys || obj).length,
-        index = 0, currentKey;
-    if (arguments.length < 3) {
-      if (!length) throw new TypeError(reduceError);
-      memo = obj[keys ? keys[index++] : index++];
-    }
-    for (; index < length; index++) {
-      currentKey = keys ? keys[index] : index;
-      memo = iteratee(memo, obj[currentKey], currentKey, obj);
-    }
-    return memo;
-  };
+  _.reduce = _.foldl = _.inject = createReduce(1);
 
   // The right-associative version of reduce, also known as `foldr`.
-  _.reduceRight = _.foldr = function(obj, iteratee, memo, context) {
-    if (obj == null) obj = [];
-    iteratee = createCallback(iteratee, context, 4);
-    var keys = obj.length !== + obj.length && _.keys(obj),
-        index = (keys || obj).length,
-        currentKey;
-    if (arguments.length < 3) {
-      if (!index) throw new TypeError(reduceError);
-      memo = obj[keys ? keys[--index] : --index];
-    }
-    while (index--) {
-      currentKey = keys ? keys[index] : index;
-      memo = iteratee(memo, obj[currentKey], currentKey, obj);
-    }
-    return memo;
-  };
+  _.reduceRight = _.foldr = createReduce(-1);
 
   // Return the first value which passes a truth test. Aliased as `detect`.
   _.find = _.detect = function(obj, predicate, context) {
-    var result;
-    predicate = _.iteratee(predicate, context);
-    _.some(obj, function(value, index, list) {
-      if (predicate(value, index, list)) {
-        result = value;
-        return true;
-      }
-    });
-    return result;
+    var key;
+    if (isArrayLike(obj)) {
+      key = _.findIndex(obj, predicate, context);
+    } else {
+      key = _.findKey(obj, predicate, context);
+    }
+    if (key !== void 0 && key !== -1) return obj[key];
   };
 
   // Return all the elements that pass a truth test.
   // Aliased as `select`.
   _.filter = _.select = function(obj, predicate, context) {
     var results = [];
-    if (obj == null) return results;
-    predicate = _.iteratee(predicate, context);
+    predicate = cb(predicate, context);
     _.each(obj, function(value, index, list) {
       if (predicate(value, index, list)) results.push(value);
     });
@@ -17250,19 +23759,17 @@ return jQuery;
 
   // Return all the elements for which a truth test fails.
   _.reject = function(obj, predicate, context) {
-    return _.filter(obj, _.negate(_.iteratee(predicate)), context);
+    return _.filter(obj, _.negate(cb(predicate)), context);
   };
 
   // Determine whether all of the elements match a truth test.
   // Aliased as `all`.
   _.every = _.all = function(obj, predicate, context) {
-    if (obj == null) return true;
-    predicate = _.iteratee(predicate, context);
-    var keys = obj.length !== +obj.length && _.keys(obj),
-        length = (keys || obj).length,
-        index, currentKey;
-    for (index = 0; index < length; index++) {
-      currentKey = keys ? keys[index] : index;
+    predicate = cb(predicate, context);
+    var keys = !isArrayLike(obj) && _.keys(obj),
+        length = (keys || obj).length;
+    for (var index = 0; index < length; index++) {
+      var currentKey = keys ? keys[index] : index;
       if (!predicate(obj[currentKey], currentKey, obj)) return false;
     }
     return true;
@@ -17271,24 +23778,22 @@ return jQuery;
   // Determine if at least one element in the object matches a truth test.
   // Aliased as `any`.
   _.some = _.any = function(obj, predicate, context) {
-    if (obj == null) return false;
-    predicate = _.iteratee(predicate, context);
-    var keys = obj.length !== +obj.length && _.keys(obj),
-        length = (keys || obj).length,
-        index, currentKey;
-    for (index = 0; index < length; index++) {
-      currentKey = keys ? keys[index] : index;
+    predicate = cb(predicate, context);
+    var keys = !isArrayLike(obj) && _.keys(obj),
+        length = (keys || obj).length;
+    for (var index = 0; index < length; index++) {
+      var currentKey = keys ? keys[index] : index;
       if (predicate(obj[currentKey], currentKey, obj)) return true;
     }
     return false;
   };
 
-  // Determine if the array or object contains a given value (using `===`).
-  // Aliased as `include`.
-  _.contains = _.include = function(obj, target) {
-    if (obj == null) return false;
-    if (obj.length !== +obj.length) obj = _.values(obj);
-    return _.indexOf(obj, target) >= 0;
+  // Determine if the array or object contains a given item (using `===`).
+  // Aliased as `includes` and `include`.
+  _.contains = _.includes = _.include = function(obj, item, fromIndex, guard) {
+    if (!isArrayLike(obj)) obj = _.values(obj);
+    if (typeof fromIndex != 'number' || guard) fromIndex = 0;
+    return _.indexOf(obj, item, fromIndex) >= 0;
   };
 
   // Invoke a method (with arguments) on every item in a collection.
@@ -17296,7 +23801,8 @@ return jQuery;
     var args = slice.call(arguments, 2);
     var isFunc = _.isFunction(method);
     return _.map(obj, function(value) {
-      return (isFunc ? method : value[method]).apply(value, args);
+      var func = isFunc ? method : value[method];
+      return func == null ? func : func.apply(value, args);
     });
   };
 
@@ -17308,13 +23814,13 @@ return jQuery;
   // Convenience version of a common use case of `filter`: selecting only objects
   // containing specific `key:value` pairs.
   _.where = function(obj, attrs) {
-    return _.filter(obj, _.matches(attrs));
+    return _.filter(obj, _.matcher(attrs));
   };
 
   // Convenience version of a common use case of `find`: getting the first object
   // containing specific `key:value` pairs.
   _.findWhere = function(obj, attrs) {
-    return _.find(obj, _.matches(attrs));
+    return _.find(obj, _.matcher(attrs));
   };
 
   // Return the maximum element (or element-based computation).
@@ -17322,7 +23828,7 @@ return jQuery;
     var result = -Infinity, lastComputed = -Infinity,
         value, computed;
     if (iteratee == null && obj != null) {
-      obj = obj.length === +obj.length ? obj : _.values(obj);
+      obj = isArrayLike(obj) ? obj : _.values(obj);
       for (var i = 0, length = obj.length; i < length; i++) {
         value = obj[i];
         if (value > result) {
@@ -17330,7 +23836,7 @@ return jQuery;
         }
       }
     } else {
-      iteratee = _.iteratee(iteratee, context);
+      iteratee = cb(iteratee, context);
       _.each(obj, function(value, index, list) {
         computed = iteratee(value, index, list);
         if (computed > lastComputed || computed === -Infinity && result === -Infinity) {
@@ -17347,7 +23853,7 @@ return jQuery;
     var result = Infinity, lastComputed = Infinity,
         value, computed;
     if (iteratee == null && obj != null) {
-      obj = obj.length === +obj.length ? obj : _.values(obj);
+      obj = isArrayLike(obj) ? obj : _.values(obj);
       for (var i = 0, length = obj.length; i < length; i++) {
         value = obj[i];
         if (value < result) {
@@ -17355,7 +23861,7 @@ return jQuery;
         }
       }
     } else {
-      iteratee = _.iteratee(iteratee, context);
+      iteratee = cb(iteratee, context);
       _.each(obj, function(value, index, list) {
         computed = iteratee(value, index, list);
         if (computed < lastComputed || computed === Infinity && result === Infinity) {
@@ -17370,7 +23876,7 @@ return jQuery;
   // Shuffle a collection, using the modern version of the
   // [Fisher-Yates shuffle](http://en.wikipedia.org/wiki/Fisher–Yates_shuffle).
   _.shuffle = function(obj) {
-    var set = obj && obj.length === +obj.length ? obj : _.values(obj);
+    var set = isArrayLike(obj) ? obj : _.values(obj);
     var length = set.length;
     var shuffled = Array(length);
     for (var index = 0, rand; index < length; index++) {
@@ -17386,7 +23892,7 @@ return jQuery;
   // The internal `guard` argument allows it to work with `map`.
   _.sample = function(obj, n, guard) {
     if (n == null || guard) {
-      if (obj.length !== +obj.length) obj = _.values(obj);
+      if (!isArrayLike(obj)) obj = _.values(obj);
       return obj[_.random(obj.length - 1)];
     }
     return _.shuffle(obj).slice(0, Math.max(0, n));
@@ -17394,7 +23900,7 @@ return jQuery;
 
   // Sort the object's values by a criterion produced by an iteratee.
   _.sortBy = function(obj, iteratee, context) {
-    iteratee = _.iteratee(iteratee, context);
+    iteratee = cb(iteratee, context);
     return _.pluck(_.map(obj, function(value, index, list) {
       return {
         value: value,
@@ -17416,7 +23922,7 @@ return jQuery;
   var group = function(behavior) {
     return function(obj, iteratee, context) {
       var result = {};
-      iteratee = _.iteratee(iteratee, context);
+      iteratee = cb(iteratee, context);
       _.each(obj, function(value, index) {
         var key = iteratee(value, index, obj);
         behavior(result, value, key);
@@ -17444,37 +23950,24 @@ return jQuery;
     if (_.has(result, key)) result[key]++; else result[key] = 1;
   });
 
-  // Use a comparator function to figure out the smallest index at which
-  // an object should be inserted so as to maintain order. Uses binary search.
-  _.sortedIndex = function(array, obj, iteratee, context) {
-    iteratee = _.iteratee(iteratee, context, 1);
-    var value = iteratee(obj);
-    var low = 0, high = array.length;
-    while (low < high) {
-      var mid = low + high >>> 1;
-      if (iteratee(array[mid]) < value) low = mid + 1; else high = mid;
-    }
-    return low;
-  };
-
   // Safely create a real, live array from anything iterable.
   _.toArray = function(obj) {
     if (!obj) return [];
     if (_.isArray(obj)) return slice.call(obj);
-    if (obj.length === +obj.length) return _.map(obj, _.identity);
+    if (isArrayLike(obj)) return _.map(obj, _.identity);
     return _.values(obj);
   };
 
   // Return the number of elements in an object.
   _.size = function(obj) {
     if (obj == null) return 0;
-    return obj.length === +obj.length ? obj.length : _.keys(obj).length;
+    return isArrayLike(obj) ? obj.length : _.keys(obj).length;
   };
 
   // Split a collection into two arrays: one whose elements all satisfy the given
   // predicate, and one whose elements all do not satisfy the predicate.
   _.partition = function(obj, predicate, context) {
-    predicate = _.iteratee(predicate, context);
+    predicate = cb(predicate, context);
     var pass = [], fail = [];
     _.each(obj, function(value, key, obj) {
       (predicate(value, key, obj) ? pass : fail).push(value);
@@ -17491,30 +23984,27 @@ return jQuery;
   _.first = _.head = _.take = function(array, n, guard) {
     if (array == null) return void 0;
     if (n == null || guard) return array[0];
-    if (n < 0) return [];
-    return slice.call(array, 0, n);
+    return _.initial(array, array.length - n);
   };
 
   // Returns everything but the last entry of the array. Especially useful on
   // the arguments object. Passing **n** will return all the values in
-  // the array, excluding the last N. The **guard** check allows it to work with
-  // `_.map`.
+  // the array, excluding the last N.
   _.initial = function(array, n, guard) {
     return slice.call(array, 0, Math.max(0, array.length - (n == null || guard ? 1 : n)));
   };
 
   // Get the last element of an array. Passing **n** will return the last N
-  // values in the array. The **guard** check allows it to work with `_.map`.
+  // values in the array.
   _.last = function(array, n, guard) {
     if (array == null) return void 0;
     if (n == null || guard) return array[array.length - 1];
-    return slice.call(array, Math.max(array.length - n, 0));
+    return _.rest(array, Math.max(0, array.length - n));
   };
 
   // Returns everything but the first entry of the array. Aliased as `tail` and `drop`.
   // Especially useful on the arguments object. Passing an **n** will return
-  // the rest N values in the array. The **guard**
-  // check allows it to work with `_.map`.
+  // the rest N values in the array.
   _.rest = _.tail = _.drop = function(array, n, guard) {
     return slice.call(array, n == null || guard ? 1 : n);
   };
@@ -17525,18 +24015,20 @@ return jQuery;
   };
 
   // Internal implementation of a recursive `flatten` function.
-  var flatten = function(input, shallow, strict, output) {
-    if (shallow && _.every(input, _.isArray)) {
-      return concat.apply(output, input);
-    }
-    for (var i = 0, length = input.length; i < length; i++) {
+  var flatten = function(input, shallow, strict, startIndex) {
+    var output = [], idx = 0;
+    for (var i = startIndex || 0, length = getLength(input); i < length; i++) {
       var value = input[i];
-      if (!_.isArray(value) && !_.isArguments(value)) {
-        if (!strict) output.push(value);
-      } else if (shallow) {
-        push.apply(output, value);
-      } else {
-        flatten(value, shallow, strict, output);
+      if (isArrayLike(value) && (_.isArray(value) || _.isArguments(value))) {
+        //flatten current level of array or arguments object
+        if (!shallow) value = flatten(value, shallow, strict);
+        var j = 0, len = value.length;
+        output.length += len;
+        while (j < len) {
+          output[idx++] = value[j++];
+        }
+      } else if (!strict) {
+        output[idx++] = value;
       }
     }
     return output;
@@ -17544,7 +24036,7 @@ return jQuery;
 
   // Flatten out an array, either recursively (by default), or just one level.
   _.flatten = function(array, shallow) {
-    return flatten(array, shallow, false, []);
+    return flatten(array, shallow, false);
   };
 
   // Return a version of the array that does not contain the specified value(s).
@@ -17556,27 +24048,26 @@ return jQuery;
   // been sorted, you have the option of using a faster algorithm.
   // Aliased as `unique`.
   _.uniq = _.unique = function(array, isSorted, iteratee, context) {
-    if (array == null) return [];
     if (!_.isBoolean(isSorted)) {
       context = iteratee;
       iteratee = isSorted;
       isSorted = false;
     }
-    if (iteratee != null) iteratee = _.iteratee(iteratee, context);
+    if (iteratee != null) iteratee = cb(iteratee, context);
     var result = [];
     var seen = [];
-    for (var i = 0, length = array.length; i < length; i++) {
-      var value = array[i];
+    for (var i = 0, length = getLength(array); i < length; i++) {
+      var value = array[i],
+          computed = iteratee ? iteratee(value, i, array) : value;
       if (isSorted) {
-        if (!i || seen !== value) result.push(value);
-        seen = value;
+        if (!i || seen !== computed) result.push(value);
+        seen = computed;
       } else if (iteratee) {
-        var computed = iteratee(value, i, array);
-        if (_.indexOf(seen, computed) < 0) {
+        if (!_.contains(seen, computed)) {
           seen.push(computed);
           result.push(value);
         }
-      } else if (_.indexOf(result, value) < 0) {
+      } else if (!_.contains(result, value)) {
         result.push(value);
       }
     }
@@ -17586,16 +24077,15 @@ return jQuery;
   // Produce an array that contains the union: each distinct element from all of
   // the passed-in arrays.
   _.union = function() {
-    return _.uniq(flatten(arguments, true, true, []));
+    return _.uniq(flatten(arguments, true, true));
   };
 
   // Produce an array that contains every item shared between all the
   // passed-in arrays.
   _.intersection = function(array) {
-    if (array == null) return [];
     var result = [];
     var argsLength = arguments.length;
-    for (var i = 0, length = array.length; i < length; i++) {
+    for (var i = 0, length = getLength(array); i < length; i++) {
       var item = array[i];
       if (_.contains(result, item)) continue;
       for (var j = 1; j < argsLength; j++) {
@@ -17609,7 +24099,7 @@ return jQuery;
   // Take the difference between one array and a number of other arrays.
   // Only the elements present in just the first array will remain.
   _.difference = function(array) {
-    var rest = flatten(slice.call(arguments, 1), true, true, []);
+    var rest = flatten(arguments, true, true, 1);
     return _.filter(array, function(value){
       return !_.contains(rest, value);
     });
@@ -17617,23 +24107,28 @@ return jQuery;
 
   // Zip together multiple lists into a single array -- elements that share
   // an index go together.
-  _.zip = function(array) {
-    if (array == null) return [];
-    var length = _.max(arguments, 'length').length;
-    var results = Array(length);
-    for (var i = 0; i < length; i++) {
-      results[i] = _.pluck(arguments, i);
+  _.zip = function() {
+    return _.unzip(arguments);
+  };
+
+  // Complement of _.zip. Unzip accepts an array of arrays and groups
+  // each array's elements on shared indices
+  _.unzip = function(array) {
+    var length = array && _.max(array, getLength).length || 0;
+    var result = Array(length);
+
+    for (var index = 0; index < length; index++) {
+      result[index] = _.pluck(array, index);
     }
-    return results;
+    return result;
   };
 
   // Converts lists into objects. Pass either a single array of `[key, value]`
   // pairs, or two parallel arrays of the same length -- one of keys, and one of
   // the corresponding values.
   _.object = function(list, values) {
-    if (list == null) return {};
     var result = {};
-    for (var i = 0, length = list.length; i < length; i++) {
+    for (var i = 0, length = getLength(list); i < length; i++) {
       if (values) {
         result[list[i]] = values[i];
       } else {
@@ -17643,40 +24138,73 @@ return jQuery;
     return result;
   };
 
+  // Generator function to create the findIndex and findLastIndex functions
+  function createPredicateIndexFinder(dir) {
+    return function(array, predicate, context) {
+      predicate = cb(predicate, context);
+      var length = getLength(array);
+      var index = dir > 0 ? 0 : length - 1;
+      for (; index >= 0 && index < length; index += dir) {
+        if (predicate(array[index], index, array)) return index;
+      }
+      return -1;
+    };
+  }
+
+  // Returns the first index on an array-like that passes a predicate test
+  _.findIndex = createPredicateIndexFinder(1);
+  _.findLastIndex = createPredicateIndexFinder(-1);
+
+  // Use a comparator function to figure out the smallest index at which
+  // an object should be inserted so as to maintain order. Uses binary search.
+  _.sortedIndex = function(array, obj, iteratee, context) {
+    iteratee = cb(iteratee, context, 1);
+    var value = iteratee(obj);
+    var low = 0, high = getLength(array);
+    while (low < high) {
+      var mid = Math.floor((low + high) / 2);
+      if (iteratee(array[mid]) < value) low = mid + 1; else high = mid;
+    }
+    return low;
+  };
+
+  // Generator function to create the indexOf and lastIndexOf functions
+  function createIndexFinder(dir, predicateFind, sortedIndex) {
+    return function(array, item, idx) {
+      var i = 0, length = getLength(array);
+      if (typeof idx == 'number') {
+        if (dir > 0) {
+            i = idx >= 0 ? idx : Math.max(idx + length, i);
+        } else {
+            length = idx >= 0 ? Math.min(idx + 1, length) : idx + length + 1;
+        }
+      } else if (sortedIndex && idx && length) {
+        idx = sortedIndex(array, item);
+        return array[idx] === item ? idx : -1;
+      }
+      if (item !== item) {
+        idx = predicateFind(slice.call(array, i, length), _.isNaN);
+        return idx >= 0 ? idx + i : -1;
+      }
+      for (idx = dir > 0 ? i : length - 1; idx >= 0 && idx < length; idx += dir) {
+        if (array[idx] === item) return idx;
+      }
+      return -1;
+    };
+  }
+
   // Return the position of the first occurrence of an item in an array,
   // or -1 if the item is not included in the array.
   // If the array is large and already in sort order, pass `true`
   // for **isSorted** to use binary search.
-  _.indexOf = function(array, item, isSorted) {
-    if (array == null) return -1;
-    var i = 0, length = array.length;
-    if (isSorted) {
-      if (typeof isSorted == 'number') {
-        i = isSorted < 0 ? Math.max(0, length + isSorted) : isSorted;
-      } else {
-        i = _.sortedIndex(array, item);
-        return array[i] === item ? i : -1;
-      }
-    }
-    for (; i < length; i++) if (array[i] === item) return i;
-    return -1;
-  };
-
-  _.lastIndexOf = function(array, item, from) {
-    if (array == null) return -1;
-    var idx = array.length;
-    if (typeof from == 'number') {
-      idx = from < 0 ? idx + from + 1 : Math.min(idx, from + 1);
-    }
-    while (--idx >= 0) if (array[idx] === item) return idx;
-    return -1;
-  };
+  _.indexOf = createIndexFinder(1, _.findIndex, _.sortedIndex);
+  _.lastIndexOf = createIndexFinder(-1, _.findLastIndex);
 
   // Generate an integer Array containing an arithmetic progression. A port of
   // the native Python `range()` function. See
   // [the Python documentation](http://docs.python.org/library/functions.html#range).
   _.range = function(start, stop, step) {
-    if (arguments.length <= 1) {
+    if (stop == null) {
       stop = start || 0;
       start = 0;
     }
@@ -17695,25 +24223,25 @@ return jQuery;
   // Function (ahem) Functions
   // ------------------
 
-  // Reusable constructor function for prototype setting.
-  var Ctor = function(){};
+  // Determines whether to execute a function as a constructor
+  // or a normal function with the provided arguments
+  var executeBound = function(sourceFunc, boundFunc, context, callingContext, args) {
+    if (!(callingContext instanceof boundFunc)) return sourceFunc.apply(context, args);
+    var self = baseCreate(sourceFunc.prototype);
+    var result = sourceFunc.apply(self, args);
+    if (_.isObject(result)) return result;
+    return self;
+  };
 
   // Create a function bound to a given object (assigning `this`, and arguments,
   // optionally). Delegates to **ECMAScript 5**'s native `Function.bind` if
   // available.
   _.bind = function(func, context) {
-    var args, bound;
     if (nativeBind && func.bind === nativeBind) return nativeBind.apply(func, slice.call(arguments, 1));
     if (!_.isFunction(func)) throw new TypeError('Bind must be called on a function');
-    args = slice.call(arguments, 2);
-    bound = function() {
-      if (!(this instanceof bound)) return func.apply(context, args.concat(slice.call(arguments)));
-      Ctor.prototype = func.prototype;
-      var self = new Ctor;
-      Ctor.prototype = null;
-      var result = func.apply(self, args.concat(slice.call(arguments)));
-      if (_.isObject(result)) return result;
-      return self;
+    var args = slice.call(arguments, 2);
+    var bound = function() {
+      return executeBound(func, bound, context, this, args.concat(slice.call(arguments)));
     };
     return bound;
   };
@@ -17723,15 +24251,16 @@ return jQuery;
   // as a placeholder, allowing any combination of arguments to be pre-filled.
   _.partial = function(func) {
     var boundArgs = slice.call(arguments, 1);
-    return function() {
-      var position = 0;
-      var args = boundArgs.slice();
-      for (var i = 0, length = args.length; i < length; i++) {
-        if (args[i] === _) args[i] = arguments[position++];
+    var bound = function() {
+      var position = 0, length = boundArgs.length;
+      var args = Array(length);
+      for (var i = 0; i < length; i++) {
+        args[i] = boundArgs[i] === _ ? arguments[position++] : boundArgs[i];
       }
       while (position < arguments.length) args.push(arguments[position++]);
-      return func.apply(this, args);
+      return executeBound(func, bound, this, this, args);
     };
+    return bound;
   };
 
   // Bind a number of an object's methods to that object. Remaining arguments
@@ -17751,7 +24280,7 @@ return jQuery;
   _.memoize = function(func, hasher) {
     var memoize = function(key) {
       var cache = memoize.cache;
-      var address = hasher ? hasher.apply(this, arguments) : key;
+      var address = '' + (hasher ? hasher.apply(this, arguments) : key);
       if (!_.has(cache, address)) cache[address] = func.apply(this, arguments);
       return cache[address];
     };
@@ -17770,9 +24299,7 @@ return jQuery;
 
   // Defers a function, scheduling it to run after the current call stack has
   // cleared.
-  _.defer = function(func) {
-    return _.delay.apply(_, [func, 1].concat(slice.call(arguments, 1)));
-  };
+  _.defer = _.partial(_.delay, _, 1);
 
   // Returns a function, that, when invoked, will only be triggered at most once
   // during a given window of time. Normally, the throttled function will run
@@ -17797,8 +24324,10 @@ return jQuery;
       context = this;
       args = arguments;
       if (remaining <= 0 || remaining > wait) {
-        clearTimeout(timeout);
-        timeout = null;
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
         previous = now;
         result = func.apply(context, args);
         if (!timeout) context = args = null;
@@ -17819,7 +24348,7 @@ return jQuery;
     var later = function() {
       var last = _.now() - timestamp;
 
-      if (last < wait && last > 0) {
+      if (last < wait && last >= 0) {
         timeout = setTimeout(later, wait - last);
       } else {
         timeout = null;
@@ -17872,7 +24401,7 @@ return jQuery;
     };
   };
 
-  // Returns a function that will only be executed after being called N times.
+  // Returns a function that will only be executed on and after the Nth call.
   _.after = function(times, func) {
     return function() {
       if (--times < 1) {
@@ -17881,15 +24410,14 @@ return jQuery;
     };
   };
 
-  // Returns a function that will only be executed before being called N times.
+  // Returns a function that will only be executed up to (but not including) the Nth call.
   _.before = function(times, func) {
     var memo;
     return function() {
       if (--times > 0) {
         memo = func.apply(this, arguments);
-      } else {
-        func = null;
       }
+      if (times <= 1) func = null;
       return memo;
     };
   };
@@ -17901,13 +24429,47 @@ return jQuery;
   // Object Functions
   // ----------------
 
-  // Retrieve the names of an object's properties.
+  // Keys in IE < 9 that won't be iterated by `for key in ...` and thus missed.
+  var hasEnumBug = !{toString: null}.propertyIsEnumerable('toString');
+  var nonEnumerableProps = ['valueOf', 'isPrototypeOf', 'toString',
+                      'propertyIsEnumerable', 'hasOwnProperty', 'toLocaleString'];
+
+  function collectNonEnumProps(obj, keys) {
+    var nonEnumIdx = nonEnumerableProps.length;
+    var constructor = obj.constructor;
+    var proto = (_.isFunction(constructor) && constructor.prototype) || ObjProto;
+
+    // Constructor is a special case.
+    var prop = 'constructor';
+    if (_.has(obj, prop) && !_.contains(keys, prop)) keys.push(prop);
+
+    while (nonEnumIdx--) {
+      prop = nonEnumerableProps[nonEnumIdx];
+      if (prop in obj && obj[prop] !== proto[prop] && !_.contains(keys, prop)) {
+        keys.push(prop);
+      }
+    }
+  }
+
+  // Retrieve the names of an object's own properties.
   // Delegates to **ECMAScript 5**'s native `Object.keys`
   _.keys = function(obj) {
     if (!_.isObject(obj)) return [];
     if (nativeKeys) return nativeKeys(obj);
     var keys = [];
     for (var key in obj) if (_.has(obj, key)) keys.push(key);
+    // Ahem, IE < 9.
+    if (hasEnumBug) collectNonEnumProps(obj, keys);
+    return keys;
+  };
+
+  // Retrieve all the property names of an object.
+  _.allKeys = function(obj) {
+    if (!_.isObject(obj)) return [];
+    var keys = [];
+    for (var key in obj) keys.push(key);
+    // Ahem, IE < 9.
+    if (hasEnumBug) collectNonEnumProps(obj, keys);
     return keys;
   };
 
@@ -17920,6 +24482,21 @@ return jQuery;
       values[i] = obj[keys[i]];
     }
     return values;
+  };
+
+  // Returns the results of applying the iteratee to each element of the object
+  // In contrast to _.map it returns an object
+  _.mapObject = function(obj, iteratee, context) {
+    iteratee = cb(iteratee, context);
+    var keys =  _.keys(obj),
+          length = keys.length,
+          results = {},
+          currentKey;
+      for (var index = 0; index < length; index++) {
+        currentKey = keys[index];
+        results[currentKey] = iteratee(obj[currentKey], currentKey, obj);
+      }
+      return results;
   };
 
   // Convert an object into a list of `[key, value]` pairs.
@@ -17954,37 +24531,38 @@ return jQuery;
   };
 
   // Extend a given object with all the properties in passed-in object(s).
-  _.extend = function(obj) {
-    if (!_.isObject(obj)) return obj;
-    var source, prop;
-    for (var i = 1, length = arguments.length; i < length; i++) {
-      source = arguments[i];
-      for (prop in source) {
-        if (hasOwnProperty.call(source, prop)) {
-            obj[prop] = source[prop];
-        }
-      }
+  _.extend = createAssigner(_.allKeys);
+
+  // Assigns a given object with all the own properties in the passed-in object(s)
+  // (https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Object/assign)
+  _.extendOwn = _.assign = createAssigner(_.keys);
+
+  // Returns the first key on an object that passes a predicate test
+  _.findKey = function(obj, predicate, context) {
+    predicate = cb(predicate, context);
+    var keys = _.keys(obj), key;
+    for (var i = 0, length = keys.length; i < length; i++) {
+      key = keys[i];
+      if (predicate(obj[key], key, obj)) return key;
     }
-    return obj;
   };
 
   // Return a copy of the object only containing the whitelisted properties.
-  _.pick = function(obj, iteratee, context) {
-    var result = {}, key;
+  _.pick = function(object, oiteratee, context) {
+    var result = {}, obj = object, iteratee, keys;
     if (obj == null) return result;
-    if (_.isFunction(iteratee)) {
-      iteratee = createCallback(iteratee, context);
-      for (key in obj) {
-        var value = obj[key];
-        if (iteratee(value, key, obj)) result[key] = value;
-      }
+    if (_.isFunction(oiteratee)) {
+      keys = _.allKeys(obj);
+      iteratee = optimizeCb(oiteratee, context);
     } else {
-      var keys = concat.apply([], slice.call(arguments, 1));
-      obj = new Object(obj);
-      for (var i = 0, length = keys.length; i < length; i++) {
-        key = keys[i];
-        if (key in obj) result[key] = obj[key];
-      }
+      keys = flatten(arguments, false, false, 1);
+      iteratee = function(value, key, obj) { return key in obj; };
+      obj = Object(obj);
+    }
+    for (var i = 0, length = keys.length; i < length; i++) {
+      var key = keys[i];
+      var value = obj[key];
+      if (iteratee(value, key, obj)) result[key] = value;
     }
     return result;
   };
@@ -17994,7 +24572,7 @@ return jQuery;
     if (_.isFunction(iteratee)) {
       iteratee = _.negate(iteratee);
     } else {
-      var keys = _.map(concat.apply([], slice.call(arguments, 1)), String);
+      var keys = _.map(flatten(arguments, false, false, 1), String);
       iteratee = function(value, key) {
         return !_.contains(keys, key);
       };
@@ -18003,15 +24581,15 @@ return jQuery;
   };
 
   // Fill in a given object with default properties.
-  _.defaults = function(obj) {
-    if (!_.isObject(obj)) return obj;
-    for (var i = 1, length = arguments.length; i < length; i++) {
-      var source = arguments[i];
-      for (var prop in source) {
-        if (obj[prop] === void 0) obj[prop] = source[prop];
-      }
-    }
-    return obj;
+  _.defaults = createAssigner(_.allKeys, true);
+
+  // Creates an object that inherits from the given prototype object.
+  // If additional properties are provided then they will be added to the
+  // created object.
+  _.create = function(prototype, props) {
+    var result = baseCreate(prototype);
+    if (props) _.extendOwn(result, props);
+    return result;
   };
 
   // Create a (shallow-cloned) duplicate of an object.
@@ -18027,6 +24605,19 @@ return jQuery;
     interceptor(obj);
     return obj;
   };
+
+  // Returns whether an object has a given set of `key:value` pairs.
+  _.isMatch = function(object, attrs) {
+    var keys = _.keys(attrs), length = keys.length;
+    if (object == null) return !length;
+    var obj = Object(object);
+    for (var i = 0; i < length; i++) {
+      var key = keys[i];
+      if (attrs[key] !== obj[key] || !(key in obj)) return false;
+    }
+    return true;
+  };
+
 
   // Internal recursive comparison function for `isEqual`.
   var eq = function(a, b, aStack, bStack) {
@@ -18062,74 +24653,76 @@ return jQuery;
         // of `NaN` are not equivalent.
         return +a === +b;
     }
-    if (typeof a != 'object' || typeof b != 'object') return false;
+
+    var areArrays = className === '[object Array]';
+    if (!areArrays) {
+      if (typeof a != 'object' || typeof b != 'object') return false;
+
+      // Objects with different constructors are not equivalent, but `Object`s or `Array`s
+      // from different frames are.
+      var aCtor = a.constructor, bCtor = b.constructor;
+      if (aCtor !== bCtor && !(_.isFunction(aCtor) && aCtor instanceof aCtor &&
+                               _.isFunction(bCtor) && bCtor instanceof bCtor)
+                          && ('constructor' in a && 'constructor' in b)) {
+        return false;
+      }
+    }
     // Assume equality for cyclic structures. The algorithm for detecting cyclic
     // structures is adapted from ES 5.1 section 15.12.3, abstract operation `JO`.
+
+    // Initializing stack of traversed objects.
+    // It's done here since we only need them for objects and arrays comparison.
+    aStack = aStack || [];
+    bStack = bStack || [];
     var length = aStack.length;
     while (length--) {
       // Linear search. Performance is inversely proportional to the number of
       // unique nested structures.
       if (aStack[length] === a) return bStack[length] === b;
     }
-    // Objects with different constructors are not equivalent, but `Object`s
-    // from different frames are.
-    var aCtor = a.constructor, bCtor = b.constructor;
-    if (
-      aCtor !== bCtor &&
-      // Handle Object.create(x) cases
-      'constructor' in a && 'constructor' in b &&
-      !(_.isFunction(aCtor) && aCtor instanceof aCtor &&
-        _.isFunction(bCtor) && bCtor instanceof bCtor)
-    ) {
-      return false;
-    }
+
     // Add the first object to the stack of traversed objects.
     aStack.push(a);
     bStack.push(b);
-    var size, result;
+
     // Recursively compare objects and arrays.
-    if (className === '[object Array]') {
+    if (areArrays) {
       // Compare array lengths to determine if a deep comparison is necessary.
-      size = a.length;
-      result = size === b.length;
-      if (result) {
-        // Deep compare the contents, ignoring non-numeric properties.
-        while (size--) {
-          if (!(result = eq(a[size], b[size], aStack, bStack))) break;
-        }
+      length = a.length;
+      if (length !== b.length) return false;
+      // Deep compare the contents, ignoring non-numeric properties.
+      while (length--) {
+        if (!eq(a[length], b[length], aStack, bStack)) return false;
       }
     } else {
       // Deep compare objects.
       var keys = _.keys(a), key;
-      size = keys.length;
+      length = keys.length;
       // Ensure that both objects contain the same number of properties before comparing deep equality.
-      result = _.keys(b).length === size;
-      if (result) {
-        while (size--) {
-          // Deep compare each member
-          key = keys[size];
-          if (!(result = _.has(b, key) && eq(a[key], b[key], aStack, bStack))) break;
-        }
+      if (_.keys(b).length !== length) return false;
+      while (length--) {
+        // Deep compare each member
+        key = keys[length];
+        if (!(_.has(b, key) && eq(a[key], b[key], aStack, bStack))) return false;
       }
     }
     // Remove the first object from the stack of traversed objects.
     aStack.pop();
     bStack.pop();
-    return result;
+    return true;
   };
 
   // Perform a deep comparison to check if two objects are equal.
   _.isEqual = function(a, b) {
-    return eq(a, b, [], []);
+    return eq(a, b);
   };
 
   // Is a given array, string, or object empty?
   // An "empty" object has no enumerable own-properties.
   _.isEmpty = function(obj) {
     if (obj == null) return true;
-    if (_.isArray(obj) || _.isString(obj) || _.isArguments(obj)) return obj.length === 0;
-    for (var key in obj) if (_.has(obj, key)) return false;
-    return true;
+    if (isArrayLike(obj) && (_.isArray(obj) || _.isString(obj) || _.isArguments(obj))) return obj.length === 0;
+    return _.keys(obj).length === 0;
   };
 
   // Is a given value a DOM element?
@@ -18149,14 +24742,14 @@ return jQuery;
     return type === 'function' || type === 'object' && !!obj;
   };
 
-  // Add some isType methods: isArguments, isFunction, isString, isNumber, isDate, isRegExp.
-  _.each(['Arguments', 'Function', 'String', 'Number', 'Date', 'RegExp'], function(name) {
+  // Add some isType methods: isArguments, isFunction, isString, isNumber, isDate, isRegExp, isError.
+  _.each(['Arguments', 'Function', 'String', 'Number', 'Date', 'RegExp', 'Error'], function(name) {
     _['is' + name] = function(obj) {
       return toString.call(obj) === '[object ' + name + ']';
     };
   });
 
-  // Define a fallback version of the method in browsers (ahem, IE), where
+  // Define a fallback version of the method in browsers (ahem, IE < 9), where
   // there isn't any inspectable "Arguments" type.
   if (!_.isArguments(arguments)) {
     _.isArguments = function(obj) {
@@ -18164,8 +24757,9 @@ return jQuery;
     };
   }
 
-  // Optimize `isFunction` if appropriate. Work around an IE 11 bug.
-  if (typeof /./ !== 'function') {
+  // Optimize `isFunction` if appropriate. Work around some typeof bugs in old v8,
+  // IE 11 (#1621), and in Safari 8 (#1929).
+  if (typeof /./ != 'function' && typeof Int8Array != 'object') {
     _.isFunction = function(obj) {
       return typeof obj == 'function' || false;
     };
@@ -18217,6 +24811,7 @@ return jQuery;
     return value;
   };
 
+  // Predicate-generating functions. Often useful outside of Underscore.
   _.constant = function(value) {
     return function() {
       return value;
@@ -18225,30 +24820,28 @@ return jQuery;
 
   _.noop = function(){};
 
-  _.property = function(key) {
-    return function(obj) {
+  _.property = property;
+
+  // Generates a function for a given object that returns a given property.
+  _.propertyOf = function(obj) {
+    return obj == null ? function(){} : function(key) {
       return obj[key];
     };
   };
 
-  // Returns a predicate for checking whether an object has a given set of `key:value` pairs.
-  _.matches = function(attrs) {
-    var pairs = _.pairs(attrs), length = pairs.length;
+  // Returns a predicate for checking whether an object has a given set of
+  // `key:value` pairs.
+  _.matcher = _.matches = function(attrs) {
+    attrs = _.extendOwn({}, attrs);
     return function(obj) {
-      if (obj == null) return !length;
-      obj = new Object(obj);
-      for (var i = 0; i < length; i++) {
-        var pair = pairs[i], key = pair[0];
-        if (pair[1] !== obj[key] || !(key in obj)) return false;
-      }
-      return true;
+      return _.isMatch(obj, attrs);
     };
   };
 
   // Run a function **n** times.
   _.times = function(n, iteratee, context) {
     var accum = Array(Math.max(0, n));
-    iteratee = createCallback(iteratee, context, 1);
+    iteratee = optimizeCb(iteratee, context, 1);
     for (var i = 0; i < n; i++) accum[i] = iteratee(i);
     return accum;
   };
@@ -18297,10 +24890,12 @@ return jQuery;
 
   // If the value of the named `property` is a function then invoke it with the
   // `object` as context; otherwise, return it.
-  _.result = function(object, property) {
-    if (object == null) return void 0;
-    var value = object[property];
-    return _.isFunction(value) ? object[property]() : value;
+  _.result = function(object, property, fallback) {
+    var value = object == null ? void 0 : object[property];
+    if (value === void 0) {
+      value = fallback;
+    }
+    return _.isFunction(value) ? value.call(object) : value;
   };
 
   // Generate a unique integer id (unique within the entire client session).
@@ -18415,8 +25010,8 @@ return jQuery;
   // underscore functions. Wrapped objects may be chained.
 
   // Helper function to continue chaining intermediate results.
-  var result = function(obj) {
-    return this._chain ? _(obj).chain() : obj;
+  var result = function(instance, obj) {
+    return instance._chain ? _(obj).chain() : obj;
   };
 
   // Add your own custom functions to the Underscore object.
@@ -18426,7 +25021,7 @@ return jQuery;
       _.prototype[name] = function() {
         var args = [this._wrapped];
         push.apply(args, arguments);
-        return result.call(this, func.apply(_, args));
+        return result(this, func.apply(_, args));
       };
     });
   };
@@ -18441,7 +25036,7 @@ return jQuery;
       var obj = this._wrapped;
       method.apply(obj, arguments);
       if ((name === 'shift' || name === 'splice') && obj.length === 0) delete obj[0];
-      return result.call(this, obj);
+      return result(this, obj);
     };
   });
 
@@ -18449,13 +25044,21 @@ return jQuery;
   _.each(['concat', 'join', 'slice'], function(name) {
     var method = ArrayProto[name];
     _.prototype[name] = function() {
-      return result.call(this, method.apply(this._wrapped, arguments));
+      return result(this, method.apply(this._wrapped, arguments));
     };
   });
 
   // Extracts the result from a wrapped and chained object.
   _.prototype.value = function() {
     return this._wrapped;
+  };
+
+  // Provide unwrapping proxy for some methods used in engine operations
+  // such as arithmetic and JSON stringification.
+  _.prototype.valueOf = _.prototype.toJSON = _.prototype.value;
+
+  _.prototype.toString = function() {
+    return '' + this._wrapped;
   };
 
   // AMD registration happens at the end for compatibility with AMD loaders
@@ -18472,7 +25075,7 @@ return jQuery;
   }
 }.call(this));
 
-},{}],97:[function(require,module,exports){
+},{}],142:[function(require,module,exports){
 var $, Woo, hljs, _,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; };
 
@@ -18483,24 +25086,14 @@ _ = require('underscore');
 window.hljs = hljs = require('highlight.js');
 
 Woo = (function() {
-  Woo.prototype.menuPreviewTolerance = 150;
-
-  Woo.prototype.menuOpenTolerance = 10;
-
-  Woo.prototype.previousMousePosition = {};
-
   function Woo() {
     this.closeMenuEventually = __bind(this.closeMenuEventually, this);
-    this.maybePreview = __bind(this.maybePreview, this);
-    this.maybeOpen = __bind(this.maybeOpen, this);
     this.openMenu = __bind(this.openMenu, this);
     hljs.initHighlighting();
     this.setupEvents();
     this.bindWidthPickers();
     this.activateCodeShowing();
     this.executeColorTransmogrification();
-    this._maybeOpen = _.debounce(this.maybeOpen, 10, true);
-    this._maybePreview = _.debounce(this.maybePreview, 10, true);
   }
 
   Woo.prototype.openMenu = function() {
@@ -18508,20 +25101,6 @@ Woo = (function() {
     $('body nav .menu').addClass('close');
     if (this.delayedClose) {
       return clearTimeout(this.delayedClose);
-    }
-  };
-
-  Woo.prototype.maybeOpen = function(mousePosition) {
-    if (mousePosition.x < this.previousMousePosition.x && mousePosition.x <= this.menuOpenTolerance) {
-      return this.openMenu();
-    }
-  };
-
-  Woo.prototype.maybePreview = function(mousePosition) {
-    if (mousePosition.x < this.previousMousePosition.x && mousePosition.x <= this.menuPreviewTolerance) {
-      return $('body nav').addClass('near-menu');
-    } else if (mousePosition.x >= this.menuPreviewTolerance) {
-      return $('body nav').removeClass('near-menu');
     }
   };
 
@@ -18562,22 +25141,6 @@ Woo = (function() {
     $("body #woo-styleguide :not(" + notSelectors + ")").on('click', this.closeMenu);
     $('body nav').on('click', '.menu', this.openMenu);
     $('body nav').on('click', '.close', this.closeMenu);
-    $('body').on('mouseleave', (function(_this) {
-      return function() {
-        return _this.previousMousePosition.x = 0;
-      };
-    })(this));
-    $('body').on('mousemove', (function(_this) {
-      return function(e) {
-        var mousePosition;
-        mousePosition = {
-          x: e.pageX
-        };
-        _this._maybeOpen(mousePosition);
-        _this._maybePreview(mousePosition);
-        return _this.previousMousePosition = mousePosition;
-      };
-    })(this));
     return $('nav .nav-item').on('click', '.nav-item-title, .nav-item-icon', this.openNavItem);
   };
 
@@ -18595,4 +25158,4 @@ $(function() {
 });
 
 
-},{"highlight.js":2,"jquery":95,"underscore":96}]},{},[97])
+},{"highlight.js":2,"jquery":140,"underscore":141}]},{},[142])
