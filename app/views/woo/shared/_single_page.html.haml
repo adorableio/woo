@@ -12,10 +12,11 @@
             %h3.notes-title # Notes
             = render_contents_string(notes)
 
+  - the_markup = render_contents_string(page[:markup])
   %dd.preview
-    = render_contents_string(page[:markup])
+    = the_markup
 
   %dd.location-title
     .location= page[:filepath]
     %pre
-      %code(class="#{page[:lang]}")= "#{render_contents_string(page[:markup])}"
+      %code(class="#{page[:lang]}")= "#{the_markup}"
