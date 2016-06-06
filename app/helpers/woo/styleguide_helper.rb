@@ -15,8 +15,12 @@ module Woo
       page_hash(filepath)
     end
 
-    def render_haml_string(contents)
-      Haml::Engine.new(contents).render
+    def render_contents_string(hash)
+      if hash[:lang] == 'haml'
+        Haml::Engine.new(hash[:contents]).render
+      else
+        ERB.new(hash[:contents]).result(binding).html_safe
+      end
     end
 
     def load_notes(filepath)
@@ -26,16 +30,15 @@ module Woo
     end
 
     def page_hash(filepath)
-      lang     = filepath.match(/haml$/) ? 'haml' : 'markup'
+      lang     = filepath.match(/haml$/) ? 'haml' : 'erb'
       name     = File.basename(filepath)
                      .gsub(/^\_|.html.*/, '')
 
       {
         :name       => name,
         :filepath   => filepath,
-        :contents   => File.read(filepath).sub(/^-{1,3}$\n.*^-{1,3}$\n/m, ''),
-        :notes      => load_notes(filepath),
-        :lang       => lang
+        :markup     => {contents: File.read(filepath).sub(/^-{1,3}$\n.*^-{1,3}$\n/m, ''), lang: lang},
+        :notes      => {contents: load_notes(filepath), lang: lang}
       }
     end
 

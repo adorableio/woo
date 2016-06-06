@@ -10,10 +10,10 @@
         .small-12.column
           .wrapper
             %h3.notes-title # Notes
-            = render_haml_string(notes)
+            = render_contents_string(notes)
 
   %dd.preview
-    = render_haml_string(page[:contents])
+    = render_contents_string(page[:markup])
 
   %dd.location-title
     .location= page[:filepath]
