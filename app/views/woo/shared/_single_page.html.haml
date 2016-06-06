@@ -18,4 +18,4 @@
   %dd.location-title
     .location= page[:filepath]
     %pre
-      %code(class="#{page[:lang]}")= page[:contents]
+      %code(class="#{page[:lang]}")= "#{render_contents_string(page[:markup])}"
