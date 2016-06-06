@@ -4,7 +4,7 @@
   %dt.page-title
     = page[:name].titleize
   - notes = page[:notes]
-  - if notes
+  - if notes && notes[:content].present?
     %dd.notes
       .row
         .small-12.column
