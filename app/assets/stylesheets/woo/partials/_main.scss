@@ -35,7 +35,7 @@ body {
 }
 
 #woo-styleguide {
-  background: $black;
+  background: rgba($black, .2);
   padding: 0;
   margin: 0;
   font-family: $body-font;
@@ -65,10 +65,13 @@ body {
 
     &:hover { color: $primary-color; }
 
-    + pre { display: none; }
+    + pre {
+      display: none;
+      margin: 0;
+    }
+
     + pre code {
-      box-shadow: inset 0 -20px 0 #fafaff;
-      background-color: #f3f3fa;
+      background-color: #f3f3f7;
       font-size: 14px;
       padding: 4em 20px 4.6em;
     }
