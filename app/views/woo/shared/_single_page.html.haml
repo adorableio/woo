@@ -4,18 +4,19 @@
   %dt.page-title
     = page[:name].titleize
   - notes = page[:notes]
-  - if notes
+  - if notes && notes[:content].present?
     %dd.notes
       .row
         .small-12.column
           .wrapper
             %h3.notes-title # Notes
-            = render_haml_string(notes)
+            = render_contents_string(notes)
 
+  - the_markup = render_contents_string(page[:markup])
   %dd.preview
-    = render_haml_string(page[:contents])
+    = the_markup
 
   %dd.location-title
     .location= page[:filepath]
     %pre<
-      %code(class="#{page[:lang]}")= page[:contents]
+      %code(class="#{page[:lang]}")= "#{the_markup}"
